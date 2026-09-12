@@ -70,19 +70,19 @@ export default function ImportWizard({ accounts }: { accounts: Account[] }) {
           existingMapping = null;
         }
       }
-      const hasHeader = existingMapping?.hasHeader ?? true;
-      const sm = existingMapping ?? guessMapping(rows, hasHeader);
+      const sm = existingMapping ?? guessMapping(rows, account?.type);
 
       setPreview({
         rows,
-        sampleRows: rows.slice(0, 15),
-        columnCount: rows[0]?.length ?? 0,
+        sampleRows: rows.slice(0, 30),
+        columnCount: rows.reduce((max, r) => Math.max(max, r.length), 0),
         rowCount,
         suggestedMapping: sm,
         hasSavedMapping: !!existingMapping,
       });
       setMapping({
         encoding,
+        skipRows: sm.skipRows ?? 0,
         hasHeader: sm.hasHeader ?? true,
         delimiter,
         dateColumnIndex: sm.dateColumnIndex ?? 0,
@@ -92,6 +92,7 @@ export default function ImportWizard({ accounts }: { accounts: Account[] }) {
         amountColumnIndex: sm.amountColumnIndex ?? 2,
         incomeColumnIndex: sm.incomeColumnIndex ?? null,
         expenseColumnIndex: sm.expenseColumnIndex ?? null,
+        memoColumnIndex: sm.memoColumnIndex ?? null,
       });
     } catch (e) {
       setPreviewError(e instanceof Error ? e.message : "プレビューに失敗しました");
@@ -125,7 +126,8 @@ export default function ImportWizard({ accounts }: { accounts: Account[] }) {
   }
 
   const columnOptions = Array.from({ length: preview?.columnCount ?? 0 }, (_, i) => i);
-  const headerRow = mapping?.hasHeader ? preview?.sampleRows[0] : undefined;
+  const headerRow =
+    mapping?.hasHeader ? preview?.sampleRows[mapping.skipRows] : undefined;
 
   function columnLabel(i: number) {
     const header = headerRow?.[i];
@@ -215,30 +217,68 @@ export default function ImportWizard({ accounts }: { accounts: Account[] }) {
                 </p>
               )}
 
-              <div className="overflow-x-auto rounded-lg border border-slate-100">
+              <p className="text-xs text-slate-400">
+                カード明細などは先頭に請求額・口座情報などの前置き行が含まれることがあります。その場合は下の「先頭のスキップ行数」で明細表が始まる行を指定してください。
+              </p>
+
+              <div className="max-h-72 overflow-auto rounded-lg border border-slate-100">
                 <table className="w-full min-w-max text-xs">
                   <tbody>
-                    {preview.sampleRows.slice(0, 6).map((row, ri) => (
-                      <tr key={ri} className={ri === 0 && mapping.hasHeader ? "bg-slate-50 font-medium" : ""}>
-                        {row.map((cell, ci) => (
-                          <td key={ci} className="border-b border-slate-100 px-2 py-1 whitespace-nowrap">
-                            {cell}
+                    {preview.sampleRows.map((row, ri) => {
+                      const isSkipped = ri < mapping.skipRows;
+                      const isHeader = mapping.hasHeader && ri === mapping.skipRows;
+                      return (
+                        <tr
+                          key={ri}
+                          className={
+                            isHeader
+                              ? "bg-slate-900 font-medium text-white"
+                              : isSkipped
+                              ? "text-slate-300"
+                              : ""
+                          }
+                        >
+                          <td className="border-b border-slate-100 px-2 py-1 text-right text-[10px] opacity-60">
+                            {ri}
                           </td>
-                        ))}
-                      </tr>
-                    ))}
+                          {row.map((cell, ci) => (
+                            <td
+                              key={ci}
+                              className="border-b border-slate-100 px-2 py-1 whitespace-nowrap"
+                            >
+                              {cell}
+                            </td>
+                          ))}
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
 
-              <label className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={mapping.hasHeader}
-                  onChange={(e) => setMapping({ ...mapping, hasHeader: e.target.checked })}
-                />
-                1行目はヘッダー（項目名）
-              </label>
+              <div className="flex flex-wrap items-end gap-4">
+                <label className="text-sm">
+                  <span className="mb-1 block text-slate-500">先頭のスキップ行数</span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={Math.max(0, preview.sampleRows.length - 1)}
+                    className="w-24 rounded-lg border border-slate-300 px-2 py-1.5"
+                    value={mapping.skipRows}
+                    onChange={(e) =>
+                      setMapping({ ...mapping, skipRows: Math.max(0, Number(e.target.value)) })
+                    }
+                  />
+                </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={mapping.hasHeader}
+                    onChange={(e) => setMapping({ ...mapping, hasHeader: e.target.checked })}
+                  />
+                  スキップ後の1行目はヘッダー（項目名）
+                </label>
+              </div>
 
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <label className="text-sm">
@@ -357,6 +397,27 @@ export default function ImportWizard({ accounts }: { accounts: Account[] }) {
                     </select>
                   </label>
                 )}
+
+                <label className="text-sm">
+                  <span className="mb-1 block text-slate-500">メモの列（任意）</span>
+                  <select
+                    className="w-full rounded-lg border border-slate-300 px-2 py-1.5"
+                    value={mapping.memoColumnIndex ?? ""}
+                    onChange={(e) =>
+                      setMapping({
+                        ...mapping,
+                        memoColumnIndex: e.target.value === "" ? null : Number(e.target.value),
+                      })
+                    }
+                  >
+                    <option value="">なし</option>
+                    {columnOptions.map((i) => (
+                      <option key={i} value={i}>
+                        {columnLabel(i)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
               </div>
 
               <div className="flex items-center gap-3">

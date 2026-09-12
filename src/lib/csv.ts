@@ -48,6 +48,7 @@ const HEADER_HINTS = {
   amount: ["金額", "取引金額", "ご利用金額", "利用金額"],
   income: ["入金", "お預入", "預入", "入金金額"],
   expense: ["出金", "お引出", "引出", "支払金額", "出金金額"],
+  memo: ["備考", "メモ"],
 };
 
 function findColumn(header: string[], hints: string[]): number {
@@ -58,27 +59,68 @@ function findColumn(header: string[], hints: string[]): number {
   return -1;
 }
 
+/**
+ * Real-world bank/card CSVs often have a few preamble rows (account summary,
+ * billing totals, etc.) before the actual transaction table starts. Scan the
+ * first rows for the one that looks most like a header row (matches both a
+ * date-ish and an amount-ish or description-ish hint) instead of assuming
+ * row 0 is always it.
+ */
+export function guessHeaderRowIndex(rows: string[][], maxScan = 30): number {
+  let bestIndex = 0;
+  let bestScore = -1;
+  const limit = Math.min(rows.length, maxScan);
+  for (let i = 0; i < limit; i++) {
+    const row = rows[i];
+    const hasDate = findColumn(row, HEADER_HINTS.date) >= 0;
+    const hasDesc = findColumn(row, HEADER_HINTS.description) >= 0;
+    const hasAmount = findColumn(row, HEADER_HINTS.amount) >= 0;
+    const hasIncome = findColumn(row, HEADER_HINTS.income) >= 0;
+    const hasExpense = findColumn(row, HEADER_HINTS.expense) >= 0;
+    const score =
+      (hasDate ? 1 : 0) +
+      (hasDesc ? 1 : 0) +
+      (hasAmount ? 1 : 0) +
+      (hasIncome ? 1 : 0) +
+      (hasExpense ? 1 : 0);
+    // require at least a date plus one more signal to count as a header row
+    if (hasDate && score >= 2 && score > bestScore) {
+      bestScore = score;
+      bestIndex = i;
+    }
+  }
+  return bestScore >= 0 ? bestIndex : 0;
+}
+
 export function guessMapping(
   rows: string[][],
-  hasHeader: boolean
+  accountType?: "BANK" | "CREDIT_CARD"
 ): Partial<ImportMapping> {
   if (rows.length === 0) return {};
-  const header = hasHeader ? rows[0] : [];
-  const dateIdx = hasHeader ? findColumn(header, HEADER_HINTS.date) : -1;
-  const descIdx = hasHeader ? findColumn(header, HEADER_HINTS.description) : -1;
-  const amountIdx = hasHeader ? findColumn(header, HEADER_HINTS.amount) : -1;
-  const incomeIdx = hasHeader ? findColumn(header, HEADER_HINTS.income) : -1;
-  const expenseIdx = hasHeader ? findColumn(header, HEADER_HINTS.expense) : -1;
+  const headerRowIndex = guessHeaderRowIndex(rows);
+  const header = rows[headerRowIndex] ?? [];
+  const dateIdx = findColumn(header, HEADER_HINTS.date);
+  const descIdx = findColumn(header, HEADER_HINTS.description);
+  const amountIdx = findColumn(header, HEADER_HINTS.amount);
+  const incomeIdx = findColumn(header, HEADER_HINTS.income);
+  const expenseIdx = findColumn(header, HEADER_HINTS.expense);
+  const memoIdx = findColumn(header, HEADER_HINTS.memo);
 
-  const mapping: Partial<ImportMapping> = {};
+  const mapping: Partial<ImportMapping> = {
+    hasHeader: true,
+    skipRows: headerRowIndex,
+  };
   if (dateIdx >= 0) mapping.dateColumnIndex = dateIdx;
   if (descIdx >= 0) mapping.descriptionColumnIndex = descIdx;
+  if (memoIdx >= 0 && memoIdx !== descIdx) mapping.memoColumnIndex = memoIdx;
   if (incomeIdx >= 0 && expenseIdx >= 0) {
     mapping.amountMode = "DUAL_COLUMN";
     mapping.incomeColumnIndex = incomeIdx;
     mapping.expenseColumnIndex = expenseIdx;
   } else if (amountIdx >= 0) {
-    mapping.amountMode = "SIGNED_SINGLE";
+    // Credit-card CSVs almost always list usage amounts unsigned, meaning "charged".
+    mapping.amountMode =
+      accountType === "CREDIT_CARD" ? "UNSIGNED_EXPENSE_SINGLE" : "SIGNED_SINGLE";
     mapping.amountColumnIndex = amountIdx;
   }
   return mapping;
@@ -105,13 +147,22 @@ const DATE_FORMATS: { pattern: RegExp; parse: (m: RegExpMatchArray) => string }[
     pattern: /^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/,
     parse: (m) => `${m[3]}-${m[1].padStart(2, "0")}-${m[2].padStart(2, "0")}`,
   },
+  {
+    // 260810 → credit-card style YYMMDD, assumed 20YY
+    pattern: /^(\d{2})(\d{2})(\d{2})$/,
+    parse: (m) => `20${m[1]}-${m[2]}-${m[3]}`,
+  },
 ];
 
 export function parseDateFlexible(raw: string): string | null {
   const s = raw.trim();
   for (const fmt of DATE_FORMATS) {
     const m = s.match(fmt.pattern);
-    if (m) return fmt.parse(m);
+    if (!m) continue;
+    const parsed = fmt.parse(m);
+    const [, mm, dd] = parsed.split("-").map(Number);
+    if (mm < 1 || mm > 12 || dd < 1 || dd > 31) continue;
+    return parsed;
   }
   return null;
 }
@@ -136,6 +187,7 @@ export interface ParsedRow {
   date: string;
   rawDescription: string;
   amount: number;
+  memo: string | null;
   rawRow: string[];
 }
 
@@ -149,7 +201,8 @@ export function buildRows(
   rows: string[][],
   mapping: ImportMapping
 ): { parsed: ParsedRow[]; errors: RowError[] } {
-  const dataRows = mapping.hasHeader ? rows.slice(1) : rows;
+  const fromSkip = rows.slice(mapping.skipRows ?? 0);
+  const dataRows = mapping.hasHeader ? fromSkip.slice(1) : fromSkip;
   const parsed: ParsedRow[] = [];
   const errors: RowError[] = [];
 
@@ -198,7 +251,12 @@ export function buildRows(
       return;
     }
 
-    parsed.push({ date, rawDescription: description, amount, rawRow: row });
+    const memo =
+      mapping.memoColumnIndex != null
+        ? (row[mapping.memoColumnIndex] || "").trim() || null
+        : null;
+
+    parsed.push({ date, rawDescription: description, amount, memo, rawRow: row });
   });
 
   return { parsed, errors };

@@ -19,6 +19,9 @@ export interface Account {
 
 export interface ImportMapping {
   encoding: "AUTO" | "UTF8" | "SJIS";
+  /** Rows to discard from the very top of the file before the header/data begins
+   * (e.g. card summary info printed above the transaction table). */
+  skipRows: number;
   hasHeader: boolean;
   delimiter: string;
   dateColumnIndex: number;
@@ -28,6 +31,7 @@ export interface ImportMapping {
   amountColumnIndex?: number | null;
   incomeColumnIndex?: number | null;
   expenseColumnIndex?: number | null;
+  memoColumnIndex?: number | null;
 }
 
 export interface Category {

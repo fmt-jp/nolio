@@ -82,7 +82,7 @@ export async function commitImport(
       category_id: categoryId,
       type: categoryType,
       amount: row.amount,
-      memo: null,
+      memo: row.memo,
       raw_row: JSON.stringify(row.rawRow),
       dedupe_hash: hash,
       is_manual_category: 0,
