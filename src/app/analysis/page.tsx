@@ -135,8 +135,19 @@ export default function AnalysisPage() {
       <div className="rounded-2xl border border-slate-200 bg-white p-4">
         <h2 className="mb-2 text-sm font-semibold text-slate-600">
           {unit === "month" ? "月別推移（直近12か月）" : "年別推移（直近5年）"}
+          <span className="ml-2 font-normal text-slate-400">
+            （棒をクリックするとその{unit === "month" ? "月" : "年"}を表示）
+          </span>
         </h2>
-        {loading ? <ChartSkeleton /> : <TrendBarChart points={trend} />}
+        {loading ? (
+          <ChartSkeleton />
+        ) : (
+          <TrendBarChart
+            points={trend}
+            selectedLabel={unit === "month" ? yearMonth : year}
+            onSelect={(label) => (unit === "month" ? setYearMonth(label) : setYear(label))}
+          />
+        )}
       </div>
 
       <div className="rounded-2xl border border-slate-200 bg-white p-4">

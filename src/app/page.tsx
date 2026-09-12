@@ -77,8 +77,15 @@ export default function DashboardPage() {
       <div className="rounded-2xl border border-slate-200 bg-white p-4">
         <h2 className="mb-2 text-sm font-semibold text-slate-600">
           月別収支推移（直近6か月）
+          <span className="ml-2 font-normal text-slate-400">
+            （棒をクリックするとその月を表示）
+          </span>
         </h2>
-        {loading ? <ChartSkeleton /> : <TrendBarChart points={trend} />}
+        {loading ? (
+          <ChartSkeleton />
+        ) : (
+          <TrendBarChart points={trend} selectedLabel={yearMonth} onSelect={setYearMonth} />
+        )}
       </div>
 
       <div className="rounded-2xl border border-slate-200 bg-white p-4">
