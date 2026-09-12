@@ -3,7 +3,13 @@
 import { useEffect, useMemo, useState } from "react";
 import TransactionEditModal from "@/components/TransactionEditModal";
 import { formatDateLabel, formatYen, typeLabel } from "@/lib/format";
-import { getMeta, listTransactions, TransactionFilter, TransactionWithJoins } from "@/lib/repo";
+import {
+  deleteTransactions,
+  getMeta,
+  listTransactions,
+  TransactionFilter,
+  TransactionWithJoins,
+} from "@/lib/repo";
 import { Account, Category, TxType } from "@/lib/types";
 
 const PAGE_SIZE = 30;
@@ -24,6 +30,8 @@ export default function TransactionsPage() {
   const [search, setSearch] = useState("");
 
   const [editing, setEditing] = useState<TransactionWithJoins | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     getMeta().then((data) => {
@@ -56,6 +64,7 @@ export default function TransactionsPage() {
 
   useEffect(() => {
     setPage(1);
+    setSelectedIds(new Set());
   }, [yearMonth, accountId, categoryId, type, search]);
 
   const grouped = useMemo(() => {
@@ -69,6 +78,51 @@ export default function TransactionsPage() {
   }, [items]);
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
+  const allOnPageSelected = items.length > 0 && items.every((it) => selectedIds.has(it.id));
+
+  function toggleSelect(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAllOnPage() {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (allOnPageSelected) {
+        items.forEach((it) => next.delete(it.id));
+      } else {
+        items.forEach((it) => next.add(it.id));
+      }
+      return next;
+    });
+  }
+
+  async function handleDeleteSelected() {
+    if (selectedIds.size === 0) return;
+    if (
+      !confirm(
+        `選択した${selectedIds.size}件の明細を削除しますか？この操作は取り消せません。`
+      )
+    ) {
+      return;
+    }
+    setDeleting(true);
+    await deleteTransactions([...selectedIds]);
+    setSelectedIds(new Set());
+    const data = await listTransactions(filter);
+    if (data.items.length === 0 && page > 1) {
+      setPage((p) => p - 1);
+    } else {
+      setItems(data.items);
+      setTotal(data.total);
+    }
+    setDeleting(false);
+  }
 
   return (
     <div className="flex flex-col gap-4">
@@ -132,6 +186,35 @@ export default function TransactionsPage() {
         </div>
       ) : (
         <div className="flex flex-col gap-4">
+          <div className="flex flex-wrap items-center justify-between gap-2 px-1">
+            <label className="flex items-center gap-2 text-xs text-slate-500">
+              <input
+                type="checkbox"
+                checked={allOnPageSelected}
+                onChange={toggleSelectAllOnPage}
+              />
+              このページを全選択
+            </label>
+            {selectedIds.size > 0 && (
+              <div className="flex items-center gap-3 text-sm">
+                <span className="text-slate-500">{selectedIds.size}件選択中</span>
+                <button
+                  onClick={() => setSelectedIds(new Set())}
+                  className="text-xs text-slate-400 hover:text-slate-600"
+                >
+                  選択解除
+                </button>
+                <button
+                  onClick={handleDeleteSelected}
+                  disabled={deleting}
+                  className="rounded-full bg-red-600 px-4 py-1.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50"
+                >
+                  {deleting ? "削除中..." : "削除"}
+                </button>
+              </div>
+            )}
+          </div>
+
           {grouped.map((group) => (
             <div key={group.date}>
               <div className="mb-1 px-1 text-xs font-semibold text-slate-400">
@@ -139,49 +222,59 @@ export default function TransactionsPage() {
               </div>
               <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
                 {group.items.map((item, i) => (
-                  <button
+                  <div
                     key={item.id}
-                    onClick={() => setEditing(item)}
-                    className={`flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-slate-50 ${
+                    className={`flex items-center gap-1 px-4 py-1 hover:bg-slate-50 ${
                       i !== 0 ? "border-t border-slate-100" : ""
                     }`}
                   >
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-sm font-medium text-slate-800">
-                        {item.normalized_name}
-                      </div>
-                      {item.normalized_name !== item.raw_description && (
-                        <div className="truncate text-xs text-slate-400">
-                          元明細: {item.raw_description}
-                        </div>
-                      )}
-                      <div className="mt-0.5 flex items-center gap-1.5 text-xs text-slate-400">
-                        <span>{item.account_name}</span>
-                        <span>・</span>
-                        <span
-                          className="rounded-full px-2 py-0.5 text-xs"
-                          style={{
-                            backgroundColor: `${item.category_color ?? "#e2e8f0"}22`,
-                            color: item.category_color ?? "#475569",
-                          }}
-                        >
-                          {item.category_name ?? "未分類"}
-                        </span>
-                        <span className="text-slate-300">{typeLabel(item.type)}</span>
-                      </div>
-                    </div>
-                    <div
-                      className={`shrink-0 text-sm font-semibold ${
-                        item.type === "EXPENSE"
-                          ? "text-orange-600"
-                          : item.type === "INCOME"
-                          ? "text-blue-600"
-                          : "text-slate-400"
-                      }`}
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(item.id)}
+                      onChange={() => toggleSelect(item.id)}
+                      className="shrink-0"
+                    />
+                    <button
+                      onClick={() => setEditing(item)}
+                      className="flex flex-1 items-center justify-between gap-3 py-2 text-left"
                     >
-                      {formatYen(item.amount)}
-                    </div>
-                  </button>
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-sm font-medium text-slate-800">
+                          {item.normalized_name}
+                        </div>
+                        {item.normalized_name !== item.raw_description && (
+                          <div className="truncate text-xs text-slate-400">
+                            元明細: {item.raw_description}
+                          </div>
+                        )}
+                        <div className="mt-0.5 flex items-center gap-1.5 text-xs text-slate-400">
+                          <span>{item.account_name}</span>
+                          <span>・</span>
+                          <span
+                            className="rounded-full px-2 py-0.5 text-xs"
+                            style={{
+                              backgroundColor: `${item.category_color ?? "#e2e8f0"}22`,
+                              color: item.category_color ?? "#475569",
+                            }}
+                          >
+                            {item.category_name ?? "未分類"}
+                          </span>
+                          <span className="text-slate-300">{typeLabel(item.type)}</span>
+                        </div>
+                      </div>
+                      <div
+                        className={`shrink-0 text-sm font-semibold ${
+                          item.type === "EXPENSE"
+                            ? "text-orange-600"
+                            : item.type === "INCOME"
+                            ? "text-blue-600"
+                            : "text-slate-400"
+                        }`}
+                      >
+                        {formatYen(item.amount)}
+                      </div>
+                    </button>
+                  </div>
                 ))}
               </div>
             </div>
