@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { decodeBuffer, guessMapping, parseCsvText } from "@/lib/csv";
+import { decodeBuffer, guessMapping, parseCsvText, RowError } from "@/lib/csv";
 import { CommitResult, commitImport } from "@/lib/importer";
 import { getAccount } from "@/lib/repo";
 import { Account, AmountMode, ImportMapping } from "@/lib/types";
@@ -440,13 +440,69 @@ export default function ImportWizard({ accounts }: { accounts: Account[] }) {
           )}
 
           {result && (
-            <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">
-              取り込み完了: 新規 {result.newCount}件 / 重複スキップ {result.duplicateCount}件
-              {result.errorCount > 0 && ` / 解析エラー ${result.errorCount}件`}
+            <div className="mt-4 flex flex-col gap-2">
+              <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">
+                取り込み完了: 新規 {result.newCount}件 / 重複スキップ {result.duplicateCount}件
+                {result.errorCount > 0 && ` / 解析エラー ${result.errorCount}件`}
+              </div>
+              {result.errors.length > 0 && mapping && (
+                <ImportErrorList
+                  errors={result.errors}
+                  totalErrorCount={result.errorCount}
+                  mapping={mapping}
+                />
+              )}
             </div>
           )}
         </>
       )}
+    </div>
+  );
+}
+
+function ImportErrorList({
+  errors,
+  totalErrorCount,
+  mapping,
+}: {
+  errors: RowError[];
+  totalErrorCount: number;
+  mapping: ImportMapping;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const visible = expanded ? errors : errors.slice(0, 5);
+  // Rows are 0-indexed within the data section (after skipped preamble + header row).
+  const offset = mapping.skipRows + (mapping.hasHeader ? 1 : 0);
+  const truncated = totalErrorCount > errors.length;
+  const separator = mapping.delimiter === "\t" ? " | " : ", ";
+
+  return (
+    <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <span className="font-medium text-amber-800">
+          取り込めなかった行（{totalErrorCount}件{truncated ? `中 ${errors.length}件を表示` : ""}）
+        </span>
+        {errors.length > 5 && (
+          <button
+            onClick={() => setExpanded((v) => !v)}
+            className="shrink-0 text-xs font-medium text-amber-700 hover:text-amber-900"
+          >
+            {expanded ? "折りたたむ" : `すべて表示（${errors.length}件）`}
+          </button>
+        )}
+      </div>
+      <div className="flex flex-col gap-1.5">
+        {visible.map((err, i) => (
+          <div key={i} className="rounded border border-amber-100 bg-white px-2 py-1.5">
+            <div className="text-xs font-medium text-amber-700">
+              {err.rowIndex + offset + 1}行目付近: {err.reason}
+            </div>
+            <div className="mt-0.5 truncate font-mono text-xs text-slate-500">
+              {err.rawRow.join(separator) || "(空行)"}
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
