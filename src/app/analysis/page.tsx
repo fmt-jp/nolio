@@ -5,6 +5,7 @@ import clsx from "clsx";
 import MonthSwitcher from "@/components/MonthSwitcher";
 import TrendBarChart from "@/components/charts/TrendBarChart";
 import CategoryPieChart from "@/components/charts/CategoryPieChart";
+import MerchantRankingList from "@/components/MerchantRankingList";
 import { currentYearMonth, formatSignedYen, formatYen } from "@/lib/format";
 import {
   getMonthlyTrend,
@@ -14,7 +15,8 @@ import {
   PeriodSummary,
   TrendPoint,
 } from "@/lib/summary";
-import { getDistinctYears } from "@/lib/repo";
+import { getDistinctYears, listAccounts } from "@/lib/repo";
+import { Account } from "@/lib/types";
 
 type Unit = "month" | "year";
 
@@ -23,26 +25,33 @@ export default function AnalysisPage() {
   const [yearMonth, setYearMonth] = useState(currentYearMonth());
   const [year, setYear] = useState(String(new Date().getFullYear()));
   const [breakdownType, setBreakdownType] = useState<"EXPENSE" | "INCOME">("EXPENSE");
+  const [accountId, setAccountId] = useState("");
+  const [accounts, setAccounts] = useState<Account[]>([]);
 
   const [summary, setSummary] = useState<PeriodSummary | null>(null);
   const [trend, setTrend] = useState<TrendPoint[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    listAccounts().then(setAccounts);
+  }, []);
+
+  useEffect(() => {
     let cancelled = false;
     setLoading(true);
     const period = unit === "month" ? yearMonth : year;
+    const filterAccountId = accountId || undefined;
 
     async function load() {
-      const summaryPromise = getPeriodSummary(unit, period);
+      const summaryPromise = getPeriodSummary(unit, period, filterAccountId);
       const trendPromise =
         unit === "month"
-          ? getMonthlyTrend(lastNMonths(12, yearMonth))
+          ? getMonthlyTrend(lastNMonths(12, yearMonth), filterAccountId)
           : (async () => {
               const currentYear = String(new Date().getFullYear());
               const allYears = await getDistinctYears();
               const years = [...new Set([...allYears, currentYear])].sort();
-              return getYearlyTrend(years.slice(-5));
+              return getYearlyTrend(years.slice(-5), filterAccountId);
             })();
 
       const [summaryRes, trendPoints] = await Promise.all([summaryPromise, trendPromise]);
@@ -56,13 +65,25 @@ export default function AnalysisPage() {
     return () => {
       cancelled = true;
     };
-  }, [unit, yearMonth, year]);
+  }, [unit, yearMonth, year, accountId]);
 
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
         <h1 className="text-xl font-bold">分析</h1>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <select
+            className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm"
+            value={accountId}
+            onChange={(e) => setAccountId(e.target.value)}
+          >
+            <option value="">すべての口座</option>
+            {accounts.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.type === "BANK" ? "🏦" : "💳"} {a.name}
+              </option>
+            ))}
+          </select>
           <div className="flex rounded-full border border-slate-200 bg-white p-1 text-sm">
             <button
               className={clsx(
@@ -150,6 +171,23 @@ export default function AnalysisPage() {
               breakdownType === "EXPENSE"
                 ? summary?.expenseBreakdown ?? []
                 : summary?.incomeBreakdown ?? []
+            }
+          />
+        )}
+      </div>
+
+      <div className="rounded-2xl border border-slate-200 bg-white p-4">
+        <h2 className="mb-3 text-sm font-semibold text-slate-600">
+          摘要・支払先・利用先別ランキング（{breakdownType === "EXPENSE" ? "支出" : "収入"}）
+        </h2>
+        {loading ? (
+          <ChartSkeleton />
+        ) : (
+          <MerchantRankingList
+            items={
+              breakdownType === "EXPENSE"
+                ? summary?.expenseMerchants ?? []
+                : summary?.incomeMerchants ?? []
             }
           />
         )}
