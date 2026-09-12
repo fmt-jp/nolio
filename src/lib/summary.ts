@@ -1,4 +1,5 @@
-import { db } from "./db";
+import { getDb } from "./idbClient";
+import { Category, Transaction } from "./types";
 
 export interface CategoryBreakdownItem {
   categoryId: string | null;
@@ -19,12 +20,12 @@ export interface PeriodSummary {
 const MAX_BREAKDOWN_ITEMS = 6;
 
 function breakdown(
-  rows: { category_id: string | null; category_name: string | null; color: string | null; total: number }[]
+  rows: { categoryId: string | null; categoryName: string | null; color: string | null; total: number }[]
 ): CategoryBreakdownItem[] {
   const sorted = rows
     .map((r) => ({
-      categoryId: r.category_id,
-      categoryName: r.category_name ?? "未分類",
+      categoryId: r.categoryId,
+      categoryName: r.categoryName ?? "未分類",
       color: r.color,
       amount: Math.abs(r.total),
     }))
@@ -50,54 +51,63 @@ function breakdown(
   }));
 }
 
-function whereDateClause(kind: "month" | "year", value: string) {
-  return kind === "month" ? `t.date LIKE '${value}%'` : `t.date LIKE '${value}%'`;
+function groupByCategory(
+  txs: Transaction[],
+  categoryMap: Map<string, Category>
+): { categoryId: string | null; categoryName: string | null; color: string | null; total: number }[] {
+  const map = new Map<string | null, number>();
+  for (const t of txs) {
+    map.set(t.category_id, (map.get(t.category_id) ?? 0) + t.amount);
+  }
+  return [...map.entries()].map(([categoryId, total]) => {
+    const cat = categoryId ? categoryMap.get(categoryId) : undefined;
+    return {
+      categoryId,
+      categoryName: cat?.name ?? null,
+      color: cat?.color ?? null,
+      total,
+    };
+  });
 }
 
-export function getPeriodSummary(kind: "month" | "year", value: string): PeriodSummary {
-  const dateWhere = whereDateClause(kind, value);
+function summarizeTransactions(
+  transactions: Transaction[],
+  categories: Category[],
+  datePrefix: string
+): PeriodSummary {
+  const categoryMap = new Map(categories.map((c) => [c.id, c]));
+  const filtered = transactions.filter((t) => t.date.startsWith(datePrefix));
 
-  const incomeTotal = (
-    db
-      .prepare(
-        `SELECT COALESCE(SUM(amount), 0) as total FROM transactions t WHERE type = 'INCOME' AND ${dateWhere}`
-      )
-      .get() as { total: number }
-  ).total;
-
-  const expenseTotal = (
-    db
-      .prepare(
-        `SELECT COALESCE(SUM(amount), 0) as total FROM transactions t WHERE type = 'EXPENSE' AND ${dateWhere}`
-      )
-      .get() as { total: number }
-  ).total;
-
-  const incomeRows = db
-    .prepare(
-      `SELECT c.id as category_id, c.name as category_name, c.color as color, SUM(t.amount) as total
-       FROM transactions t LEFT JOIN categories c ON c.id = t.category_id
-       WHERE t.type = 'INCOME' AND ${dateWhere}
-       GROUP BY t.category_id`
-    )
-    .all() as { category_id: string | null; category_name: string | null; color: string | null; total: number }[];
-
-  const expenseRows = db
-    .prepare(
-      `SELECT c.id as category_id, c.name as category_name, c.color as color, SUM(t.amount) as total
-       FROM transactions t LEFT JOIN categories c ON c.id = t.category_id
-       WHERE t.type = 'EXPENSE' AND ${dateWhere}
-       GROUP BY t.category_id`
-    )
-    .all() as { category_id: string | null; category_name: string | null; color: string | null; total: number }[];
+  const incomeTx = filtered.filter((t) => t.type === "INCOME");
+  const expenseTx = filtered.filter((t) => t.type === "EXPENSE");
+  const incomeTotal = incomeTx.reduce((s, t) => s + t.amount, 0);
+  const expenseTotal = expenseTx.reduce((s, t) => s + t.amount, 0);
 
   return {
     income: incomeTotal,
     expense: Math.abs(expenseTotal),
     balance: incomeTotal + expenseTotal,
-    incomeBreakdown: breakdown(incomeRows),
-    expenseBreakdown: breakdown(expenseRows),
+    incomeBreakdown: breakdown(groupByCategory(incomeTx, categoryMap)),
+    expenseBreakdown: breakdown(groupByCategory(expenseTx, categoryMap)),
   };
+}
+
+async function loadContext(): Promise<{ transactions: Transaction[]; categories: Category[] }> {
+  const db = await getDb();
+  const [transactions, categories] = await Promise.all([
+    db.getAll("transactions"),
+    db.getAll("categories"),
+  ]);
+  return { transactions, categories };
+}
+
+export async function getPeriodSummary(
+  kind: "month" | "year",
+  value: string
+): Promise<PeriodSummary> {
+  void kind;
+  const { transactions, categories } = await loadContext();
+  return summarizeTransactions(transactions, categories, value);
 }
 
 export interface TrendPoint {
@@ -107,16 +117,18 @@ export interface TrendPoint {
   balance: number;
 }
 
-export function getMonthlyTrend(months: string[]): TrendPoint[] {
+export async function getMonthlyTrend(months: string[]): Promise<TrendPoint[]> {
+  const { transactions, categories } = await loadContext();
   return months.map((ym) => {
-    const s = getPeriodSummary("month", ym);
+    const s = summarizeTransactions(transactions, categories, ym);
     return { label: ym, income: s.income, expense: s.expense, balance: s.balance };
   });
 }
 
-export function getYearlyTrend(years: string[]): TrendPoint[] {
+export async function getYearlyTrend(years: string[]): Promise<TrendPoint[]> {
+  const { transactions, categories } = await loadContext();
   return years.map((y) => {
-    const s = getPeriodSummary("year", y);
+    const s = summarizeTransactions(transactions, categories, y);
     return { label: y, income: s.income, expense: s.expense, balance: s.balance };
   });
 }

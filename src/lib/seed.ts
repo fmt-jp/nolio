@@ -1,9 +1,10 @@
-import { db } from "./db";
-import { randomUUID } from "crypto";
+import { getDb } from "./idbClient";
+import { uid } from "./id";
+import { TxType } from "./types";
 
 const DEFAULT_CATEGORIES: {
   name: string;
-  type: "INCOME" | "EXPENSE" | "TRANSFER";
+  type: TxType;
   color: string;
   isSystem?: boolean;
 }[] = [
@@ -34,36 +35,43 @@ const DEFAULT_CATEGORIES: {
   { name: "その他資金移動", type: "TRANSFER", color: "#0f172a" },
 ];
 
-export function ensureSeed() {
-  const row = db.prepare("SELECT COUNT(*) as c FROM categories").get() as {
-    c: number;
-  };
-  if (row.c > 0) return;
+let seedPromise: Promise<void> | null = null;
 
-  const insert = db.prepare(
-    `INSERT INTO categories (id, name, type, sort_order, color, is_system) VALUES (?, ?, ?, ?, ?, ?)`
-  );
-  const tx = db.transaction(() => {
-    DEFAULT_CATEGORIES.forEach((c, i) => {
-      insert.run(
-        randomUUID(),
-        c.name,
-        c.type,
-        i,
-        c.color,
-        c.isSystem ? 1 : 0
-      );
-    });
-  });
-  tx();
+export function ensureSeed(): Promise<void> {
+  if (!seedPromise) {
+    seedPromise = (async () => {
+      const db = await getDb();
+      const count = await db.count("categories");
+      if (count > 0) return;
+      const tx = db.transaction("categories", "readwrite");
+      const now = new Date().toISOString();
+      await Promise.all([
+        ...DEFAULT_CATEGORIES.map((c, i) =>
+          tx.store.put({
+            id: uid(),
+            name: c.name,
+            type: c.type,
+            sort_order: i,
+            color: c.color,
+            is_system: c.isSystem ? 1 : 0,
+            created_at: now,
+          })
+        ),
+        tx.done,
+      ]);
+    })();
+  }
+  return seedPromise;
 }
 
-export function getUncategorizedCategoryId(type: "INCOME" | "EXPENSE"): string {
-  ensureSeed();
+export async function getUncategorizedCategoryId(
+  type: "INCOME" | "EXPENSE"
+): Promise<string> {
+  await ensureSeed();
+  const db = await getDb();
+  const all = await db.getAll("categories");
   const name = type === "INCOME" ? "未分類(収入)" : "未分類(支出)";
-  const row = db
-    .prepare("SELECT id FROM categories WHERE name = ? LIMIT 1")
-    .get(name) as { id: string } | undefined;
-  if (!row) throw new Error(`Default category not found: ${name}`);
-  return row.id;
+  const found = all.find((c) => c.name === name);
+  if (!found) throw new Error(`Default category not found: ${name}`);
+  return found.id;
 }

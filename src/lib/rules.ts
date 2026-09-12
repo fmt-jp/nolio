@@ -1,21 +1,4 @@
-import { db } from "./db";
 import { CategoryRule, NormalizationRule } from "./types";
-
-export function getNormalizationRules(): NormalizationRule[] {
-  return db
-    .prepare(
-      "SELECT * FROM normalization_rules WHERE enabled = 1 ORDER BY priority DESC, created_at ASC"
-    )
-    .all() as NormalizationRule[];
-}
-
-export function getCategoryRules(): CategoryRule[] {
-  return db
-    .prepare(
-      "SELECT * FROM category_rules WHERE enabled = 1 ORDER BY priority DESC, created_at ASC"
-    )
-    .all() as CategoryRule[];
-}
 
 function cleanWhitespace(s: string): string {
   return s.trim().replace(/\s+/g, " ");

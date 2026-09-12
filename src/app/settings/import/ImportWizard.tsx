@@ -1,22 +1,18 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { decodeBuffer, guessMapping, parseCsvText } from "@/lib/csv";
+import { CommitResult, commitImport } from "@/lib/importer";
+import { getAccount } from "@/lib/repo";
 import { Account, AmountMode, ImportMapping } from "@/lib/types";
 
-interface PreviewResponse {
-  csvText: string;
+interface PreviewData {
+  rows: string[][];
   sampleRows: string[][];
   columnCount: number;
   rowCount: number;
   suggestedMapping: Partial<ImportMapping>;
   hasSavedMapping: boolean;
-}
-
-interface CommitResponse {
-  newCount: number;
-  duplicateCount: number;
-  errorCount: number;
-  totalRows: number;
 }
 
 const AMOUNT_MODE_LABELS: Record<AmountMode, string> = {
@@ -28,74 +24,95 @@ const AMOUNT_MODE_LABELS: Record<AmountMode, string> = {
 
 export default function ImportWizard({ accounts }: { accounts: Account[] }) {
   const [accountId, setAccountId] = useState(accounts[0]?.id ?? "");
+
+  useEffect(() => {
+    if (accounts.length === 0) return;
+    if (!accountId || !accounts.some((a) => a.id === accountId)) {
+      setAccountId(accounts[0].id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accounts]);
   const [file, setFile] = useState<File | null>(null);
   const [encoding, setEncoding] = useState<"AUTO" | "UTF8" | "SJIS">("AUTO");
   const [delimiter, setDelimiter] = useState(",");
   const [loadingPreview, setLoadingPreview] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
 
-  const [preview, setPreview] = useState<PreviewResponse | null>(null);
+  const [preview, setPreview] = useState<PreviewData | null>(null);
   const [mapping, setMapping] = useState<ImportMapping | null>(null);
 
   const [committing, setCommitting] = useState(false);
-  const [result, setResult] = useState<CommitResponse | null>(null);
+  const [result, setResult] = useState<CommitResult | null>(null);
   const [commitError, setCommitError] = useState<string | null>(null);
+
+  const MAX_SIZE = 8 * 1024 * 1024; // 8MB
 
   async function handlePreview() {
     if (!file || !accountId) return;
     setLoadingPreview(true);
     setPreviewError(null);
     setResult(null);
-    const form = new FormData();
-    form.set("file", file);
-    form.set("accountId", accountId);
-    form.set("encoding", encoding);
-    form.set("delimiter", delimiter);
-    const res = await fetch("/api/import/preview", { method: "POST", body: form });
-    const data = await res.json();
-    setLoadingPreview(false);
-    if (!res.ok) {
-      setPreviewError(data.error || "プレビューに失敗しました");
+    try {
+      if (file.size > MAX_SIZE) {
+        throw new Error("ファイルサイズが大きすぎます (8MB以下)");
+      }
+      const buf = await file.arrayBuffer();
+      const text = decodeBuffer(buf, encoding);
+      const { rows, rowCount } = parseCsvText(text, delimiter);
+      if (rowCount === 0) throw new Error("CSVを解析できませんでした");
+
+      const account = await getAccount(accountId);
+      let existingMapping: ImportMapping | null = null;
+      if (account?.import_config) {
+        try {
+          existingMapping = JSON.parse(account.import_config);
+        } catch {
+          existingMapping = null;
+        }
+      }
+      const hasHeader = existingMapping?.hasHeader ?? true;
+      const sm = existingMapping ?? guessMapping(rows, hasHeader);
+
+      setPreview({
+        rows,
+        sampleRows: rows.slice(0, 15),
+        columnCount: rows[0]?.length ?? 0,
+        rowCount,
+        suggestedMapping: sm,
+        hasSavedMapping: !!existingMapping,
+      });
+      setMapping({
+        encoding,
+        hasHeader: sm.hasHeader ?? true,
+        delimiter,
+        dateColumnIndex: sm.dateColumnIndex ?? 0,
+        descriptionColumnIndex: sm.descriptionColumnIndex ?? 1,
+        descriptionColumnIndex2: sm.descriptionColumnIndex2 ?? null,
+        amountMode: sm.amountMode ?? "SIGNED_SINGLE",
+        amountColumnIndex: sm.amountColumnIndex ?? 2,
+        incomeColumnIndex: sm.incomeColumnIndex ?? null,
+        expenseColumnIndex: sm.expenseColumnIndex ?? null,
+      });
+    } catch (e) {
+      setPreviewError(e instanceof Error ? e.message : "プレビューに失敗しました");
       setPreview(null);
-      return;
+    } finally {
+      setLoadingPreview(false);
     }
-    setPreview(data);
-    const sm = data.suggestedMapping ?? {};
-    setMapping({
-      encoding,
-      hasHeader: sm.hasHeader ?? true,
-      delimiter,
-      dateColumnIndex: sm.dateColumnIndex ?? 0,
-      descriptionColumnIndex: sm.descriptionColumnIndex ?? 1,
-      descriptionColumnIndex2: sm.descriptionColumnIndex2 ?? null,
-      amountMode: sm.amountMode ?? "SIGNED_SINGLE",
-      amountColumnIndex: sm.amountColumnIndex ?? 2,
-      incomeColumnIndex: sm.incomeColumnIndex ?? null,
-      expenseColumnIndex: sm.expenseColumnIndex ?? null,
-    });
   }
 
   async function handleCommit() {
     if (!preview || !mapping || !accountId) return;
     setCommitting(true);
     setCommitError(null);
-    const res = await fetch("/api/import/commit", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        accountId,
-        csvText: preview.csvText,
-        mapping,
-        fileName: file?.name ?? null,
-      }),
-    });
-    const data = await res.json();
-    setCommitting(false);
-    if (!res.ok) {
-      setCommitError(data.error || "取り込みに失敗しました");
-      return;
+    try {
+      const data = await commitImport(accountId, preview.rows, mapping, file?.name ?? null);
+      setResult(data);
+    } catch (e) {
+      setCommitError(e instanceof Error ? e.message : "取り込みに失敗しました");
+    } finally {
+      setCommitting(false);
     }
-    setResult(data);
   }
 
   function reset() {

@@ -6,7 +6,15 @@ import MonthSwitcher from "@/components/MonthSwitcher";
 import TrendBarChart from "@/components/charts/TrendBarChart";
 import CategoryPieChart from "@/components/charts/CategoryPieChart";
 import { currentYearMonth, formatSignedYen, formatYen } from "@/lib/format";
-import { PeriodSummary, TrendPoint } from "@/lib/summary";
+import {
+  getMonthlyTrend,
+  getPeriodSummary,
+  getYearlyTrend,
+  lastNMonths,
+  PeriodSummary,
+  TrendPoint,
+} from "@/lib/summary";
+import { getDistinctYears } from "@/lib/repo";
 
 type Unit = "month" | "year";
 
@@ -21,25 +29,33 @@ export default function AnalysisPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let cancelled = false;
     setLoading(true);
     const period = unit === "month" ? yearMonth : year;
-    const summaryUrl =
-      unit === "month"
-        ? `/api/summary/monthly?yearMonth=${period}`
-        : `/api/summary/yearly?year=${period}`;
-    const trendUrl =
-      unit === "month"
-        ? `/api/summary/trend?unit=month&count=12&end=${yearMonth}`
-        : `/api/summary/trend?unit=year&count=5`;
 
-    Promise.all([
-      fetch(summaryUrl).then((r) => r.json()),
-      fetch(trendUrl).then((r) => r.json()),
-    ]).then(([summaryRes, trendRes]) => {
+    async function load() {
+      const summaryPromise = getPeriodSummary(unit, period);
+      const trendPromise =
+        unit === "month"
+          ? getMonthlyTrend(lastNMonths(12, yearMonth))
+          : (async () => {
+              const currentYear = String(new Date().getFullYear());
+              const allYears = await getDistinctYears();
+              const years = [...new Set([...allYears, currentYear])].sort();
+              return getYearlyTrend(years.slice(-5));
+            })();
+
+      const [summaryRes, trendPoints] = await Promise.all([summaryPromise, trendPromise]);
+      if (cancelled) return;
       setSummary(summaryRes);
-      setTrend(trendRes.points ?? []);
+      setTrend(trendPoints);
       setLoading(false);
-    });
+    }
+
+    load();
+    return () => {
+      cancelled = true;
+    };
   }, [unit, yearMonth, year]);
 
   return (

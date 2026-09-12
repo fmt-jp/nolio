@@ -1,5 +1,5 @@
-import { randomUUID } from "crypto";
-import { db } from "./db";
+import { getDb } from "./idbClient";
+import { uid } from "./id";
 import { ensureSeed } from "./seed";
 import {
   Account,
@@ -13,154 +13,198 @@ import {
   TxType,
 } from "./types";
 
-ensureSeed();
+function nowIso(): string {
+  return new Date().toISOString();
+}
 
 // ---------- Accounts ----------
-export function listAccounts(): Account[] {
-  return db
-    .prepare("SELECT * FROM accounts ORDER BY sort_order ASC, created_at ASC")
-    .all() as Account[];
+export async function listAccounts(): Promise<Account[]> {
+  const db = await getDb();
+  const all = await db.getAll("accounts");
+  return all.sort(
+    (a, b) => a.sort_order - b.sort_order || a.created_at.localeCompare(b.created_at)
+  );
 }
 
-export function getAccount(id: string): Account | undefined {
-  return db.prepare("SELECT * FROM accounts WHERE id = ?").get(id) as
-    | Account
-    | undefined;
+export async function getAccount(id: string): Promise<Account | undefined> {
+  const db = await getDb();
+  return db.get("accounts", id);
 }
 
-export function createAccount(input: {
+export async function createAccount(input: {
   name: string;
   type: AccountType;
   paymentKeyword?: string | null;
-}): Account {
-  const id = randomUUID();
-  const maxOrder = db
-    .prepare("SELECT COALESCE(MAX(sort_order), -1) as m FROM accounts")
-    .get() as { m: number };
-  db.prepare(
-    `INSERT INTO accounts (id, name, type, payment_keyword, sort_order) VALUES (?, ?, ?, ?, ?)`
-  ).run(id, input.name, input.type, input.paymentKeyword ?? null, maxOrder.m + 1);
-  return getAccount(id)!;
+}): Promise<Account> {
+  const db = await getDb();
+  const existing = await db.getAll("accounts");
+  const maxOrder = existing.reduce((m, a) => Math.max(m, a.sort_order), -1);
+  const account: Account = {
+    id: uid(),
+    name: input.name,
+    type: input.type,
+    payment_keyword: input.paymentKeyword ?? null,
+    import_config: null,
+    sort_order: maxOrder + 1,
+    created_at: nowIso(),
+  };
+  await db.put("accounts", account);
+  return account;
 }
 
-export function updateAccount(
+export async function updateAccount(
   id: string,
   input: Partial<{ name: string; paymentKeyword: string | null; importConfig: ImportMapping }>
-): Account | undefined {
-  const current = getAccount(id);
+): Promise<Account | undefined> {
+  const db = await getDb();
+  const current = await db.get("accounts", id);
   if (!current) return undefined;
-  db.prepare(
-    `UPDATE accounts SET name = ?, payment_keyword = ?, import_config = ? WHERE id = ?`
-  ).run(
-    input.name ?? current.name,
-    input.paymentKeyword !== undefined ? input.paymentKeyword : current.payment_keyword,
-    input.importConfig ? JSON.stringify(input.importConfig) : current.import_config,
-    id
-  );
-  return getAccount(id);
+  const updated: Account = {
+    ...current,
+    name: input.name ?? current.name,
+    payment_keyword:
+      input.paymentKeyword !== undefined ? input.paymentKeyword : current.payment_keyword,
+    import_config: input.importConfig
+      ? JSON.stringify(input.importConfig)
+      : current.import_config,
+  };
+  await db.put("accounts", updated);
+  return updated;
 }
 
-export function deleteAccount(id: string) {
-  const count = db
-    .prepare("SELECT COUNT(*) as c FROM transactions WHERE account_id = ?")
-    .get(id) as { c: number };
-  if (count.c > 0) {
+export async function deleteAccount(id: string): Promise<void> {
+  const db = await getDb();
+  const count = await db.countFromIndex("transactions", "by_account", id);
+  if (count > 0) {
     throw new Error("この口座には明細が存在するため削除できません");
   }
-  db.prepare("DELETE FROM accounts WHERE id = ?").run(id);
+  await db.delete("accounts", id);
 }
 
 // ---------- Categories ----------
-export function listCategories(): Category[] {
-  return db
-    .prepare("SELECT * FROM categories ORDER BY type ASC, sort_order ASC")
-    .all() as Category[];
+export async function listCategories(): Promise<Category[]> {
+  await ensureSeed();
+  const db = await getDb();
+  const all = await db.getAll("categories");
+  return all.sort(
+    (a, b) => a.type.localeCompare(b.type) || a.sort_order - b.sort_order
+  );
 }
 
-export function getCategory(id: string): Category | undefined {
-  return db.prepare("SELECT * FROM categories WHERE id = ?").get(id) as
-    | Category
-    | undefined;
+export async function getCategory(id: string): Promise<Category | undefined> {
+  const db = await getDb();
+  return db.get("categories", id);
 }
 
-export function createCategory(input: {
+export async function createCategory(input: {
   name: string;
   type: TxType;
   color?: string | null;
-}): Category {
-  const id = randomUUID();
-  const maxOrder = db
-    .prepare(
-      "SELECT COALESCE(MAX(sort_order), -1) as m FROM categories WHERE type = ?"
-    )
-    .get(input.type) as { m: number };
-  db.prepare(
-    `INSERT INTO categories (id, name, type, sort_order, color, is_system) VALUES (?, ?, ?, ?, ?, 0)`
-  ).run(id, input.name, input.type, maxOrder.m + 1, input.color ?? null);
-  return getCategory(id)!;
+}): Promise<Category> {
+  const db = await getDb();
+  const existing = await db.getAll("categories");
+  const maxOrder = existing
+    .filter((c) => c.type === input.type)
+    .reduce((m, c) => Math.max(m, c.sort_order), -1);
+  const category: Category = {
+    id: uid(),
+    name: input.name,
+    type: input.type,
+    sort_order: maxOrder + 1,
+    color: input.color ?? null,
+    is_system: 0,
+    created_at: nowIso(),
+  };
+  await db.put("categories", category);
+  return category;
 }
 
-export function updateCategory(
+export async function updateCategory(
   id: string,
   input: Partial<{ name: string; color: string | null; sortOrder: number }>
-): Category | undefined {
-  const current = getCategory(id);
+): Promise<Category | undefined> {
+  const db = await getDb();
+  const current = await db.get("categories", id);
   if (!current) return undefined;
-  db.prepare(`UPDATE categories SET name = ?, color = ?, sort_order = ? WHERE id = ?`).run(
-    input.name ?? current.name,
-    input.color !== undefined ? input.color : current.color,
-    input.sortOrder ?? current.sort_order,
-    id
-  );
-  return getCategory(id);
+  const updated: Category = {
+    ...current,
+    name: input.name ?? current.name,
+    color: input.color !== undefined ? input.color : current.color,
+    sort_order: input.sortOrder ?? current.sort_order,
+  };
+  await db.put("categories", updated);
+  return updated;
 }
 
-export function deleteCategory(id: string) {
-  const current = getCategory(id);
+export async function deleteCategory(id: string): Promise<void> {
+  const db = await getDb();
+  const current = await db.get("categories", id);
   if (!current) return;
   if (current.is_system) throw new Error("このカテゴリは削除できません");
-  const fallback = db
-    .prepare(
-      "SELECT id FROM categories WHERE type = ? AND is_system = 1 LIMIT 1"
-    )
-    .get(current.type) as { id: string } | undefined;
-  const tx = db.transaction(() => {
-    if (fallback) {
-      db.prepare(
-        "UPDATE transactions SET category_id = ? WHERE category_id = ?"
-      ).run(fallback.id, id);
-    }
-    db.prepare("DELETE FROM category_rules WHERE category_id = ?").run(id);
-    db.prepare("DELETE FROM categories WHERE id = ?").run(id);
-  });
-  tx();
+
+  const allCategories = await db.getAll("categories");
+  const fallback = allCategories.find((c) => c.type === current.type && c.is_system);
+
+  if (fallback) {
+    const affected = await db.getAllFromIndex("transactions", "by_category", id);
+    const tx = db.transaction("transactions", "readwrite");
+    await Promise.all([
+      ...affected.map((t) =>
+        tx.store.put({ ...t, category_id: fallback.id, updated_at: nowIso() })
+      ),
+      tx.done,
+    ]);
+  }
+
+  const allCatRules = await db.getAll("categoryRules");
+  const rulesToDelete = allCatRules.filter((r) => r.category_id === id);
+  const ruleTx = db.transaction("categoryRules", "readwrite");
+  await Promise.all([
+    ...rulesToDelete.map((r) => ruleTx.store.delete(r.id)),
+    ruleTx.done,
+  ]);
+
+  await db.delete("categories", id);
 }
 
 // ---------- Normalization rules ----------
-export function listNormalizationRules(): NormalizationRule[] {
-  return db
-    .prepare(
-      "SELECT * FROM normalization_rules ORDER BY priority DESC, created_at ASC"
-    )
-    .all() as NormalizationRule[];
+export async function listNormalizationRules(): Promise<NormalizationRule[]> {
+  const db = await getDb();
+  const all = await db.getAll("normalizationRules");
+  return all
+    .filter((r) => r.enabled)
+    .sort((a, b) => b.priority - a.priority || a.created_at.localeCompare(b.created_at));
 }
 
-export function createNormalizationRule(input: {
+export async function listAllNormalizationRules(): Promise<NormalizationRule[]> {
+  const db = await getDb();
+  const all = await db.getAll("normalizationRules");
+  return all.sort(
+    (a, b) => b.priority - a.priority || a.created_at.localeCompare(b.created_at)
+  );
+}
+
+export async function createNormalizationRule(input: {
   matchType: "CONTAINS" | "REGEX";
   pattern: string;
   replacement: string;
   priority?: number;
-}): NormalizationRule {
-  const id = randomUUID();
-  db.prepare(
-    `INSERT INTO normalization_rules (id, match_type, pattern, replacement, priority) VALUES (?, ?, ?, ?, ?)`
-  ).run(id, input.matchType, input.pattern, input.replacement, input.priority ?? 0);
-  return db
-    .prepare("SELECT * FROM normalization_rules WHERE id = ?")
-    .get(id) as NormalizationRule;
+}): Promise<NormalizationRule> {
+  const db = await getDb();
+  const rule: NormalizationRule = {
+    id: uid(),
+    match_type: input.matchType,
+    pattern: input.pattern,
+    replacement: input.replacement,
+    priority: input.priority ?? 0,
+    enabled: 1,
+    created_at: nowIso(),
+  };
+  await db.put("normalizationRules", rule);
+  return rule;
 }
 
-export function updateNormalizationRule(
+export async function updateNormalizationRule(
   id: string,
   input: Partial<{
     matchType: "CONTAINS" | "REGEX";
@@ -169,51 +213,65 @@ export function updateNormalizationRule(
     priority: number;
     enabled: boolean;
   }>
-) {
-  const current = db
-    .prepare("SELECT * FROM normalization_rules WHERE id = ?")
-    .get(id) as NormalizationRule | undefined;
+): Promise<NormalizationRule | undefined> {
+  const db = await getDb();
+  const current = await db.get("normalizationRules", id);
   if (!current) return undefined;
-  db.prepare(
-    `UPDATE normalization_rules SET match_type=?, pattern=?, replacement=?, priority=?, enabled=? WHERE id=?`
-  ).run(
-    input.matchType ?? current.match_type,
-    input.pattern ?? current.pattern,
-    input.replacement ?? current.replacement,
-    input.priority ?? current.priority,
-    input.enabled !== undefined ? (input.enabled ? 1 : 0) : current.enabled,
-    id
-  );
-  return db.prepare("SELECT * FROM normalization_rules WHERE id = ?").get(id);
+  const updated: NormalizationRule = {
+    ...current,
+    match_type: input.matchType ?? current.match_type,
+    pattern: input.pattern ?? current.pattern,
+    replacement: input.replacement ?? current.replacement,
+    priority: input.priority ?? current.priority,
+    enabled: input.enabled !== undefined ? (input.enabled ? 1 : 0) : current.enabled,
+  };
+  await db.put("normalizationRules", updated);
+  return updated;
 }
 
-export function deleteNormalizationRule(id: string) {
-  db.prepare("DELETE FROM normalization_rules WHERE id = ?").run(id);
+export async function deleteNormalizationRule(id: string): Promise<void> {
+  const db = await getDb();
+  await db.delete("normalizationRules", id);
 }
 
 // ---------- Category rules ----------
-export function listCategoryRules(): CategoryRule[] {
-  return db
-    .prepare(
-      "SELECT * FROM category_rules ORDER BY priority DESC, created_at ASC"
-    )
-    .all() as CategoryRule[];
+export async function listCategoryRules(): Promise<CategoryRule[]> {
+  const db = await getDb();
+  const all = await db.getAll("categoryRules");
+  return all
+    .filter((r) => r.enabled)
+    .sort((a, b) => b.priority - a.priority || a.created_at.localeCompare(b.created_at));
 }
 
-export function createCategoryRule(input: {
+export async function listAllCategoryRules(): Promise<CategoryRule[]> {
+  const db = await getDb();
+  const all = await db.getAll("categoryRules");
+  return all.sort(
+    (a, b) => b.priority - a.priority || a.created_at.localeCompare(b.created_at)
+  );
+}
+
+export async function createCategoryRule(input: {
   matchType: MatchType;
   pattern: string;
   categoryId: string;
   priority?: number;
-}): CategoryRule {
-  const id = randomUUID();
-  db.prepare(
-    `INSERT INTO category_rules (id, match_type, pattern, category_id, priority) VALUES (?, ?, ?, ?, ?)`
-  ).run(id, input.matchType, input.pattern, input.categoryId, input.priority ?? 0);
-  return db.prepare("SELECT * FROM category_rules WHERE id = ?").get(id) as CategoryRule;
+}): Promise<CategoryRule> {
+  const db = await getDb();
+  const rule: CategoryRule = {
+    id: uid(),
+    match_type: input.matchType,
+    pattern: input.pattern,
+    category_id: input.categoryId,
+    priority: input.priority ?? 0,
+    enabled: 1,
+    created_at: nowIso(),
+  };
+  await db.put("categoryRules", rule);
+  return rule;
 }
 
-export function updateCategoryRule(
+export async function updateCategoryRule(
   id: string,
   input: Partial<{
     matchType: MatchType;
@@ -222,26 +280,25 @@ export function updateCategoryRule(
     priority: number;
     enabled: boolean;
   }>
-) {
-  const current = db
-    .prepare("SELECT * FROM category_rules WHERE id = ?")
-    .get(id) as CategoryRule | undefined;
+): Promise<CategoryRule | undefined> {
+  const db = await getDb();
+  const current = await db.get("categoryRules", id);
   if (!current) return undefined;
-  db.prepare(
-    `UPDATE category_rules SET match_type=?, pattern=?, category_id=?, priority=?, enabled=? WHERE id=?`
-  ).run(
-    input.matchType ?? current.match_type,
-    input.pattern ?? current.pattern,
-    input.categoryId ?? current.category_id,
-    input.priority ?? current.priority,
-    input.enabled !== undefined ? (input.enabled ? 1 : 0) : current.enabled,
-    id
-  );
-  return db.prepare("SELECT * FROM category_rules WHERE id = ?").get(id);
+  const updated: CategoryRule = {
+    ...current,
+    match_type: input.matchType ?? current.match_type,
+    pattern: input.pattern ?? current.pattern,
+    category_id: input.categoryId ?? current.category_id,
+    priority: input.priority ?? current.priority,
+    enabled: input.enabled !== undefined ? (input.enabled ? 1 : 0) : current.enabled,
+  };
+  await db.put("categoryRules", updated);
+  return updated;
 }
 
-export function deleteCategoryRule(id: string) {
-  db.prepare("DELETE FROM category_rules WHERE id = ?").run(id);
+export async function deleteCategoryRule(id: string): Promise<void> {
+  const db = await getDb();
+  await db.delete("categoryRules", id);
 }
 
 // ---------- Transactions ----------
@@ -263,83 +320,84 @@ export interface TransactionWithJoins extends Transaction {
   category_color: string | null;
 }
 
-export function listTransactions(filter: TransactionFilter): {
-  items: TransactionWithJoins[];
-  total: number;
-} {
-  const clauses: string[] = [];
-  const params: (string | number)[] = [];
+export async function listTransactions(
+  filter: TransactionFilter
+): Promise<{ items: TransactionWithJoins[]; total: number }> {
+  const db = await getDb();
+  const [allTx, accounts, categories] = await Promise.all([
+    db.getAll("transactions"),
+    db.getAll("accounts"),
+    db.getAll("categories"),
+  ]);
+  const accountMap = new Map(accounts.map((a) => [a.id, a]));
+  const categoryMap = new Map(categories.map((c) => [c.id, c]));
 
+  let filtered = allTx;
   if (filter.yearMonth) {
-    clauses.push("t.date LIKE ?");
-    params.push(`${filter.yearMonth}%`);
+    filtered = filtered.filter((t) => t.date.startsWith(filter.yearMonth!));
   } else if (filter.year) {
-    clauses.push("t.date LIKE ?");
-    params.push(`${filter.year}%`);
+    filtered = filtered.filter((t) => t.date.startsWith(filter.year!));
   }
   if (filter.accountId) {
-    clauses.push("t.account_id = ?");
-    params.push(filter.accountId);
+    filtered = filtered.filter((t) => t.account_id === filter.accountId);
   }
   if (filter.categoryId) {
-    clauses.push("t.category_id = ?");
-    params.push(filter.categoryId);
+    filtered = filtered.filter((t) => t.category_id === filter.categoryId);
   }
   if (filter.type) {
-    clauses.push("t.type = ?");
-    params.push(filter.type);
+    filtered = filtered.filter((t) => t.type === filter.type);
   }
   if (filter.search) {
-    clauses.push("(t.raw_description LIKE ? OR t.normalized_name LIKE ?)");
-    params.push(`%${filter.search}%`, `%${filter.search}%`);
+    const q = filter.search.toLowerCase();
+    filtered = filtered.filter(
+      (t) =>
+        t.raw_description.toLowerCase().includes(q) ||
+        t.normalized_name.toLowerCase().includes(q)
+    );
   }
 
-  const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+  filtered = filtered.sort(
+    (a, b) => b.date.localeCompare(a.date) || b.created_at.localeCompare(a.created_at)
+  );
 
-  const total = (
-    db
-      .prepare(`SELECT COUNT(*) as c FROM transactions t ${where}`)
-      .get(...params) as { c: number }
-  ).c;
-
+  const total = filtered.length;
   const page = filter.page ?? 1;
   const pageSize = filter.pageSize ?? 50;
   const offset = (page - 1) * pageSize;
+  const pageItems = filtered.slice(offset, offset + pageSize);
 
-  const items = db
-    .prepare(
-      `SELECT t.*, a.name as account_name, a.type as account_type,
-              c.name as category_name, c.color as category_color
-       FROM transactions t
-       LEFT JOIN accounts a ON a.id = t.account_id
-       LEFT JOIN categories c ON c.id = t.category_id
-       ${where}
-       ORDER BY t.date DESC, t.created_at DESC
-       LIMIT ? OFFSET ?`
-    )
-    .all(...params, pageSize, offset) as TransactionWithJoins[];
+  const items: TransactionWithJoins[] = pageItems.map((t) => {
+    const account = accountMap.get(t.account_id);
+    const category = t.category_id ? categoryMap.get(t.category_id) : undefined;
+    return {
+      ...t,
+      account_name: account?.name ?? "",
+      account_type: account?.type ?? "BANK",
+      category_name: category?.name ?? null,
+      category_color: category?.color ?? null,
+    };
+  });
 
   return { items, total };
 }
 
-export function updateTransaction(
+export async function updateTransaction(
   id: string,
   input: Partial<{
     categoryId: string;
     normalizedName: string;
     memo: string | null;
   }>
-): Transaction | undefined {
-  const current = db.prepare("SELECT * FROM transactions WHERE id = ?").get(id) as
-    | Transaction
-    | undefined;
+): Promise<Transaction | undefined> {
+  const db = await getDb();
+  const current = await db.get("transactions", id);
   if (!current) return undefined;
 
   let type: TxType = current.type;
   let isManualCategory = current.is_manual_category;
   let categoryId = current.category_id;
   if (input.categoryId !== undefined) {
-    const cat = getCategory(input.categoryId);
+    const cat = await db.get("categories", input.categoryId);
     if (!cat) throw new Error("カテゴリが見つかりません");
     categoryId = cat.id;
     type = cat.type;
@@ -355,27 +413,45 @@ export function updateTransaction(
 
   const memo = input.memo !== undefined ? input.memo : current.memo;
 
-  db.prepare(
-    `UPDATE transactions SET category_id=?, type=?, normalized_name=?, memo=?, is_manual_category=?, is_manual_name=?, updated_at=datetime('now') WHERE id=?`
-  ).run(categoryId, type, normalizedName, memo, isManualCategory, isManualName, id);
-
-  return db.prepare("SELECT * FROM transactions WHERE id = ?").get(id) as Transaction;
+  const updated: Transaction = {
+    ...current,
+    category_id: categoryId,
+    type,
+    normalized_name: normalizedName,
+    memo,
+    is_manual_category: isManualCategory,
+    is_manual_name: isManualName,
+    updated_at: nowIso(),
+  };
+  await db.put("transactions", updated);
+  return updated;
 }
 
-export function getDistinctMonths(): string[] {
-  const rows = db
-    .prepare(
-      `SELECT DISTINCT substr(date, 1, 7) as ym FROM transactions ORDER BY ym DESC`
-    )
-    .all() as { ym: string }[];
-  return rows.map((r) => r.ym);
+export async function getDistinctMonths(): Promise<string[]> {
+  const db = await getDb();
+  const all = await db.getAll("transactions");
+  const set = new Set(all.map((t) => t.date.slice(0, 7)));
+  return [...set].sort((a, b) => b.localeCompare(a));
 }
 
-export function getDistinctYears(): string[] {
-  const rows = db
-    .prepare(
-      `SELECT DISTINCT substr(date, 1, 4) as y FROM transactions ORDER BY y DESC`
-    )
-    .all() as { y: string }[];
-  return rows.map((r) => r.y);
+export async function getDistinctYears(): Promise<string[]> {
+  const db = await getDb();
+  const all = await db.getAll("transactions");
+  const set = new Set(all.map((t) => t.date.slice(0, 4)));
+  return [...set].sort((a, b) => b.localeCompare(a));
+}
+
+export async function getMeta(): Promise<{
+  months: string[];
+  years: string[];
+  accounts: Account[];
+  categories: Category[];
+}> {
+  const [months, years, accounts, categories] = await Promise.all([
+    getDistinctMonths(),
+    getDistinctYears(),
+    listAccounts(),
+    listCategories(),
+  ]);
+  return { months, years, accounts, categories };
 }

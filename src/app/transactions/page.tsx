@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import TransactionEditModal from "@/components/TransactionEditModal";
 import { formatDateLabel, formatYen, typeLabel } from "@/lib/format";
-import { TransactionWithJoins } from "@/lib/repo";
+import { getMeta, listTransactions, TransactionFilter, TransactionWithJoins } from "@/lib/repo";
 import { Account, Category, TxType } from "@/lib/types";
 
 const PAGE_SIZE = 30;
@@ -26,36 +26,33 @@ export default function TransactionsPage() {
   const [editing, setEditing] = useState<TransactionWithJoins | null>(null);
 
   useEffect(() => {
-    fetch("/api/meta")
-      .then((r) => r.json())
-      .then((data) => {
-        setAccounts(data.accounts ?? []);
-        setCategories(data.categories ?? []);
-      });
+    getMeta().then((data) => {
+      setAccounts(data.accounts);
+      setCategories(data.categories);
+    });
   }, []);
 
-  const query = useMemo(() => {
-    const sp = new URLSearchParams();
-    if (yearMonth) sp.set("yearMonth", yearMonth);
-    if (accountId) sp.set("accountId", accountId);
-    if (categoryId) sp.set("categoryId", categoryId);
-    if (type) sp.set("type", type);
-    if (search) sp.set("search", search);
-    sp.set("page", String(page));
-    sp.set("pageSize", String(PAGE_SIZE));
-    return sp.toString();
-  }, [yearMonth, accountId, categoryId, type, search, page]);
+  const filter = useMemo<TransactionFilter>(
+    () => ({
+      yearMonth: yearMonth || undefined,
+      accountId: accountId || undefined,
+      categoryId: categoryId || undefined,
+      type: type || undefined,
+      search: search || undefined,
+      page,
+      pageSize: PAGE_SIZE,
+    }),
+    [yearMonth, accountId, categoryId, type, search, page]
+  );
 
   useEffect(() => {
     setLoading(true);
-    fetch(`/api/transactions?${query}`)
-      .then((r) => r.json())
-      .then((data) => {
-        setItems(data.items ?? []);
-        setTotal(data.total ?? 0);
-        setLoading(false);
-      });
-  }, [query]);
+    listTransactions(filter).then((data) => {
+      setItems(data.items);
+      setTotal(data.total);
+      setLoading(false);
+    });
+  }, [filter]);
 
   useEffect(() => {
     setPage(1);

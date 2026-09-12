@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Category } from "@/lib/types";
 import { formatDateLabel, formatYen, typeLabel } from "@/lib/format";
-import { TransactionWithJoins } from "@/lib/repo";
+import { TransactionWithJoins, updateTransaction } from "@/lib/repo";
 
 export default function TransactionEditModal({
   transaction,
@@ -32,13 +32,7 @@ export default function TransactionEditModal({
     setSaving(true);
     setError(null);
     try {
-      const res = await fetch(`/api/transactions/${transaction.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ normalizedName, categoryId, memo }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "更新に失敗しました");
+      await updateTransaction(transaction.id, { normalizedName, categoryId, memo });
       const cat = categories.find((c) => c.id === categoryId);
       onSaved({
         ...transaction,

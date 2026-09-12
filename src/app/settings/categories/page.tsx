@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { createCategory, deleteCategory, listCategories, updateCategory } from "@/lib/repo";
 import { Category, TxType } from "@/lib/types";
 
 const TYPE_LABELS: Record<TxType, string> = {
@@ -20,12 +21,10 @@ export default function CategoriesSettingsPage() {
 
   function load() {
     setLoading(true);
-    fetch("/api/categories")
-      .then((r) => r.json())
-      .then((data) => {
-        setCategories(data.categories ?? []);
-        setLoading(false);
-      });
+    listCategories().then((data) => {
+      setCategories(data);
+      setLoading(false);
+    });
   }
 
   useEffect(load, []);
@@ -33,14 +32,10 @@ export default function CategoriesSettingsPage() {
   async function handleAdd() {
     if (!newName.trim()) return;
     setError(null);
-    const res = await fetch("/api/categories", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: newName.trim(), type: newType }),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      setError(data.error);
+    try {
+      await createCategory({ name: newName.trim(), type: newType });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "追加に失敗しました");
       return;
     }
     setNewName("");
@@ -48,20 +43,16 @@ export default function CategoriesSettingsPage() {
   }
 
   async function handleRename(id: string, name: string) {
-    await fetch(`/api/categories/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name }),
-    });
+    await updateCategory(id, { name });
     load();
   }
 
   async function handleDelete(id: string) {
     if (!confirm("このカテゴリを削除しますか？関連する明細は未分類に移動します。")) return;
-    const res = await fetch(`/api/categories/${id}`, { method: "DELETE" });
-    const data = await res.json();
-    if (!res.ok) {
-      alert(data.error);
+    try {
+      await deleteCategory(id);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "削除できません");
       return;
     }
     load();

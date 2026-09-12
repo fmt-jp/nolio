@@ -6,7 +6,8 @@ import MonthSwitcher from "@/components/MonthSwitcher";
 import TrendBarChart from "@/components/charts/TrendBarChart";
 import CategoryPieChart from "@/components/charts/CategoryPieChart";
 import { currentYearMonth, formatSignedYen, formatYen } from "@/lib/format";
-import { PeriodSummary, TrendPoint } from "@/lib/summary";
+import { getPeriodSummary, lastNMonths, getMonthlyTrend, PeriodSummary, TrendPoint } from "@/lib/summary";
+import { getMeta } from "@/lib/repo";
 
 export default function DashboardPage() {
   const [yearMonth, setYearMonth] = useState(currentYearMonth());
@@ -19,16 +20,14 @@ export default function DashboardPage() {
     let cancelled = false;
     setLoading(true);
     Promise.all([
-      fetch(`/api/summary/monthly?yearMonth=${yearMonth}`).then((r) => r.json()),
-      fetch(`/api/summary/trend?unit=month&count=6&end=${yearMonth}`).then((r) =>
-        r.json()
-      ),
-      fetch("/api/meta").then((r) => r.json()),
-    ]).then(([summaryRes, trendRes, metaRes]) => {
+      getPeriodSummary("month", yearMonth),
+      getMonthlyTrend(lastNMonths(6, yearMonth)),
+      getMeta(),
+    ]).then(([summaryRes, trendPoints, metaRes]) => {
       if (cancelled) return;
       setSummary(summaryRes);
-      setTrend(trendRes.points ?? []);
-      setHasAnyData((metaRes.months?.length ?? 0) > 0);
+      setTrend(trendPoints);
+      setHasAnyData(metaRes.months.length > 0);
       setLoading(false);
     });
     return () => {

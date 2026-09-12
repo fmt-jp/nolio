@@ -3,7 +3,18 @@
 import { useEffect, useState } from "react";
 import { CategoryRule, MatchType, NormalizationRule, Category } from "@/lib/types";
 import { formatYen } from "@/lib/format";
-import { TransferCandidate } from "@/lib/importer";
+import { findTransferCandidates, reapplyRules, TransferCandidate } from "@/lib/importer";
+import {
+  createCategoryRule,
+  createNormalizationRule,
+  deleteCategoryRule,
+  deleteNormalizationRule,
+  listAllCategoryRules,
+  listAllNormalizationRules,
+  listCategories,
+  updateCategoryRule,
+  updateNormalizationRule,
+} from "@/lib/repo";
 
 export default function RulesSettingsPage() {
   const [normRules, setNormRules] = useState<NormalizationRule[]>([]);
@@ -14,28 +25,19 @@ export default function RulesSettingsPage() {
   const [message, setMessage] = useState<string | null>(null);
 
   function loadAll() {
-    fetch("/api/rules/normalization")
-      .then((r) => r.json())
-      .then((d) => setNormRules(d.rules ?? []));
-    fetch("/api/rules/category")
-      .then((r) => r.json())
-      .then((d) => setCatRules(d.rules ?? []));
-    fetch("/api/categories")
-      .then((r) => r.json())
-      .then((d) => setCategories(d.categories ?? []));
-    fetch("/api/rules/transfer-candidates")
-      .then((r) => r.json())
-      .then((d) => setCandidates(d.candidates ?? []));
+    listAllNormalizationRules().then(setNormRules);
+    listAllCategoryRules().then(setCatRules);
+    listCategories().then(setCategories);
+    findTransferCandidates().then(setCandidates);
   }
 
   useEffect(loadAll, []);
 
   async function reapply() {
     setReapplying(true);
-    const res = await fetch("/api/rules/reapply", { method: "POST" });
-    const data = await res.json();
+    const result = await reapplyRules();
     setReapplying(false);
-    setMessage(`${data.updated}件の明細に最新のルールを適用しました`);
+    setMessage(`${result.updated}件の明細に最新のルールを適用しました`);
     loadAll();
   }
 
@@ -81,11 +83,14 @@ function TransferCandidatesSection({
   const transferCategories = categories.filter((c) => c.type === "TRANSFER");
 
   async function apply(keyword: string, categoryId: string) {
-    await fetch("/api/rules/transfer-candidates/apply", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ keyword, categoryId }),
-    });
+    const existingRules = await listAllCategoryRules();
+    const exists = existingRules.some(
+      (r) => r.pattern === keyword && r.match_type === "CONTAINS" && r.category_id === categoryId
+    );
+    if (!exists) {
+      await createCategoryRule({ matchType: "CONTAINS", pattern: keyword, categoryId, priority: 10 });
+    }
+    await reapplyRules();
     onApplied();
   }
 
@@ -147,32 +152,31 @@ function NormalizationRulesSection({
 
   async function add() {
     setError(null);
-    const res = await fetch("/api/rules/normalization", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ matchType, pattern, replacement }),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      setError(data.error);
+    if (!pattern.trim() || !replacement.trim()) {
+      setError("パターンと置換後の名称を入力してください");
       return;
     }
+    if (matchType === "REGEX") {
+      try {
+        new RegExp(pattern, "u");
+      } catch {
+        setError("正規表現が不正です");
+        return;
+      }
+    }
+    await createNormalizationRule({ matchType, pattern, replacement });
     setPattern("");
     setReplacement("");
     onChange();
   }
 
   async function remove(id: string) {
-    await fetch(`/api/rules/normalization/${id}`, { method: "DELETE" });
+    await deleteNormalizationRule(id);
     onChange();
   }
 
   async function toggle(rule: NormalizationRule) {
-    await fetch(`/api/rules/normalization/${rule.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ enabled: !rule.enabled }),
-    });
+    await updateNormalizationRule(rule.id, { enabled: !rule.enabled });
     onChange();
   }
 
@@ -267,31 +271,30 @@ function CategoryRulesSection({
 
   async function add() {
     setError(null);
-    const res = await fetch("/api/rules/category", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ matchType, pattern, categoryId }),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      setError(data.error);
+    if (!pattern.trim() || !categoryId) {
+      setError("パターンとカテゴリを指定してください");
       return;
     }
+    if (matchType === "REGEX") {
+      try {
+        new RegExp(pattern, "u");
+      } catch {
+        setError("正規表現が不正です");
+        return;
+      }
+    }
+    await createCategoryRule({ matchType, pattern, categoryId });
     setPattern("");
     onChange();
   }
 
   async function remove(id: string) {
-    await fetch(`/api/rules/category/${id}`, { method: "DELETE" });
+    await deleteCategoryRule(id);
     onChange();
   }
 
   async function toggle(rule: CategoryRule) {
-    await fetch(`/api/rules/category/${rule.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ enabled: !rule.enabled }),
-    });
+    await updateCategoryRule(rule.id, { enabled: !rule.enabled });
     onChange();
   }
 

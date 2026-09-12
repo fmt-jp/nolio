@@ -1,10 +1,16 @@
-import { randomUUID } from "crypto";
-import { db } from "./db";
-import { buildRows, dedupeHash, ParsedRow, RowError } from "./csv";
-import { applyCategoryRules, applyNormalization, getCategoryRules, getNormalizationRules } from "./rules";
+import { getDb } from "./idbClient";
+import { uid } from "./id";
+import { buildRows, dedupeHash, RowError } from "./csv";
+import { applyCategoryRules, applyNormalization } from "./rules";
 import { getUncategorizedCategoryId } from "./seed";
-import { getAccount, updateAccount } from "./repo";
-import { ImportMapping } from "./types";
+import {
+  getAccount,
+  listCategories,
+  listCategoryRules,
+  listNormalizationRules,
+  updateAccount,
+} from "./repo";
+import { ImportMapping, Transaction } from "./types";
 
 export interface CommitResult {
   batchId: string;
@@ -15,72 +21,94 @@ export interface CommitResult {
   errors: RowError[];
 }
 
-export function commitImport(
+function nowIso(): string {
+  return new Date().toISOString();
+}
+
+export async function commitImport(
   accountId: string,
   rows: string[][],
   mapping: ImportMapping,
   fileName: string | null
-): CommitResult {
-  const account = getAccount(accountId);
+): Promise<CommitResult> {
+  const account = await getAccount(accountId);
   if (!account) throw new Error("口座が見つかりません");
 
   const { parsed, errors } = buildRows(rows, mapping);
-  const normRules = getNormalizationRules();
-  const catRules = getCategoryRules();
+  const [normRules, catRules, categories] = await Promise.all([
+    listNormalizationRules(),
+    listCategoryRules(),
+    listCategories(),
+  ]);
+  const categoryMap = new Map(categories.map((c) => [c.id, c]));
 
-  const batchId = randomUUID();
+  const db = await getDb();
+  const existingForAccount = await db.getAllFromIndex(
+    "transactions",
+    "by_account",
+    accountId
+  );
+  const existingHashes = new Set(existingForAccount.map((t) => t.dedupe_hash));
+
+  const batchId = uid();
+  const now = nowIso();
+  const newTransactions: Transaction[] = [];
   let newCount = 0;
   let duplicateCount = 0;
 
-  const insertTx = db.prepare(
-    `INSERT OR IGNORE INTO transactions
-      (id, account_id, import_batch_id, date, raw_description, normalized_name, category_id, type, amount, raw_row, dedupe_hash)
-     VALUES (@id, @account_id, @import_batch_id, @date, @raw_description, @normalized_name, @category_id, @type, @amount, @raw_row, @dedupe_hash)`
-  );
-
-  const insertBatch = db.prepare(
-    `INSERT INTO import_batches (id, account_id, file_name, row_count, new_count, duplicate_count) VALUES (?, ?, ?, ?, ?, ?)`
-  );
-  const updateBatchCounts = db.prepare(
-    `UPDATE import_batches SET new_count = ?, duplicate_count = ? WHERE id = ?`
-  );
-
-  const runAll = db.transaction((parsedRows: ParsedRow[]) => {
-    insertBatch.run(batchId, accountId, fileName, parsedRows.length, 0, 0);
-    for (const row of parsedRows) {
-      const hash = dedupeHash(row.date, row.rawDescription, row.amount, row.rawRow);
-      const { name: normalizedName } = applyNormalization(row.rawDescription, normRules);
-      const ruleCategoryId = applyCategoryRules(normalizedName, row.rawDescription, catRules);
-      const defaultCategoryId = getUncategorizedCategoryId(
-        row.amount >= 0 ? "INCOME" : "EXPENSE"
-      );
-      const categoryId = ruleCategoryId ?? defaultCategoryId;
-      const categoryType = db
-        .prepare("SELECT type FROM categories WHERE id = ?")
-        .get(categoryId) as { type: "INCOME" | "EXPENSE" | "TRANSFER" };
-
-      const info = insertTx.run({
-        id: randomUUID(),
-        account_id: accountId,
-        import_batch_id: batchId,
-        date: row.date,
-        raw_description: row.rawDescription,
-        normalized_name: normalizedName,
-        category_id: categoryId,
-        type: categoryType.type,
-        amount: row.amount,
-        raw_row: JSON.stringify(row.rawRow),
-        dedupe_hash: hash,
-      });
-      if (info.changes > 0) newCount++;
-      else duplicateCount++;
+  for (const row of parsed) {
+    const hash = dedupeHash(row.date, row.rawDescription, row.amount, row.rawRow);
+    if (existingHashes.has(hash)) {
+      duplicateCount++;
+      continue;
     }
-    updateBatchCounts.run(newCount, duplicateCount, batchId);
-  });
+    existingHashes.add(hash);
 
-  runAll(parsed);
+    const { name: normalizedName } = applyNormalization(row.rawDescription, normRules);
+    const ruleCategoryId = applyCategoryRules(normalizedName, row.rawDescription, catRules);
+    const defaultCategoryId = await getUncategorizedCategoryId(
+      row.amount >= 0 ? "INCOME" : "EXPENSE"
+    );
+    const categoryId = ruleCategoryId ?? defaultCategoryId;
+    const categoryType = categoryMap.get(categoryId)?.type ?? "EXPENSE";
 
-  updateAccount(accountId, { importConfig: mapping });
+    newTransactions.push({
+      id: uid(),
+      account_id: accountId,
+      import_batch_id: batchId,
+      date: row.date,
+      raw_description: row.rawDescription,
+      normalized_name: normalizedName,
+      category_id: categoryId,
+      type: categoryType,
+      amount: row.amount,
+      memo: null,
+      raw_row: JSON.stringify(row.rawRow),
+      dedupe_hash: hash,
+      is_manual_category: 0,
+      is_manual_name: 0,
+      created_at: now,
+      updated_at: now,
+    });
+    newCount++;
+  }
+
+  const tx = db.transaction(["transactions", "importBatches"], "readwrite");
+  await Promise.all([
+    ...newTransactions.map((t) => tx.objectStore("transactions").put(t)),
+    tx.objectStore("importBatches").put({
+      id: batchId,
+      account_id: accountId,
+      file_name: fileName,
+      imported_at: now,
+      row_count: parsed.length,
+      new_count: newCount,
+      duplicate_count: duplicateCount,
+    }),
+    tx.done,
+  ]);
+
+  await updateAccount(accountId, { importConfig: mapping });
 
   return {
     batchId,
@@ -93,62 +121,52 @@ export function commitImport(
 }
 
 /** Re-apply current normalization/category rules to existing transactions that were not manually edited. */
-export function reapplyRules(): { updated: number } {
-  const normRules = getNormalizationRules();
-  const catRules = getCategoryRules();
+export async function reapplyRules(): Promise<{ updated: number }> {
+  const db = await getDb();
+  const [normRules, catRules, categories, allTx] = await Promise.all([
+    listNormalizationRules(),
+    listCategoryRules(),
+    listCategories(),
+    db.getAll("transactions"),
+  ]);
+  const categoryMap = new Map(categories.map((c) => [c.id, c]));
 
-  const targets = db
-    .prepare(
-      `SELECT id, raw_description, is_manual_category, is_manual_name, amount FROM transactions`
-    )
-    .all() as {
-    id: string;
-    raw_description: string;
-    is_manual_category: number;
-    is_manual_name: number;
-    amount: number;
-  }[];
+  const toUpdate: Transaction[] = [];
+  for (const t of allTx) {
+    if (t.is_manual_name && t.is_manual_category) continue;
 
-  const updateStmt = db.prepare(
-    `UPDATE transactions SET normalized_name=?, category_id=?, type=?, updated_at=datetime('now') WHERE id=?`
-  );
+    const { name: computedName } = applyNormalization(t.raw_description, normRules);
+    const normalizedName = t.is_manual_name ? t.normalized_name : computedName;
 
-  let updated = 0;
-  const runAll = db.transaction(() => {
-    for (const t of targets) {
-      if (t.is_manual_name && t.is_manual_category) continue;
-
-      const { name: computedName } = applyNormalization(t.raw_description, normRules);
-      const normalizedName = t.is_manual_name ? null : computedName;
-
-      if (t.is_manual_category) {
-        if (normalizedName !== null) {
-          db.prepare(`UPDATE transactions SET normalized_name=? WHERE id=?`).run(
-            normalizedName,
-            t.id
-          );
-          updated++;
-        }
-        continue;
+    if (t.is_manual_category) {
+      if (!t.is_manual_name) {
+        toUpdate.push({ ...t, normalized_name: normalizedName, updated_at: nowIso() });
       }
-
-      const nameForMatch = normalizedName ?? computedName;
-      const ruleCategoryId = applyCategoryRules(nameForMatch, t.raw_description, catRules);
-      const defaultCategoryId = getUncategorizedCategoryId(
-        t.amount >= 0 ? "INCOME" : "EXPENSE"
-      );
-      const categoryId = ruleCategoryId ?? defaultCategoryId;
-      const categoryType = db
-        .prepare("SELECT type FROM categories WHERE id = ?")
-        .get(categoryId) as { type: "INCOME" | "EXPENSE" | "TRANSFER" };
-
-      updateStmt.run(nameForMatch, categoryId, categoryType.type, t.id);
-      updated++;
+      continue;
     }
-  });
-  runAll();
 
-  return { updated };
+    const ruleCategoryId = applyCategoryRules(normalizedName, t.raw_description, catRules);
+    const defaultCategoryId = await getUncategorizedCategoryId(
+      t.amount >= 0 ? "INCOME" : "EXPENSE"
+    );
+    const categoryId = ruleCategoryId ?? defaultCategoryId;
+    const categoryType = categoryMap.get(categoryId)?.type ?? "EXPENSE";
+
+    toUpdate.push({
+      ...t,
+      normalized_name: normalizedName,
+      category_id: categoryId,
+      type: categoryType,
+      updated_at: nowIso(),
+    });
+  }
+
+  if (toUpdate.length > 0) {
+    const tx = db.transaction("transactions", "readwrite");
+    await Promise.all([...toUpdate.map((t) => tx.store.put(t)), tx.done]);
+  }
+
+  return { updated: toUpdate.length };
 }
 
 export interface TransferCandidate {
@@ -164,23 +182,21 @@ export interface TransferCandidate {
 
 /** Find bank transactions whose description mentions a registered credit-card account,
  * suggesting they are card-payment transfers rather than real expenses. */
-export function findTransferCandidates(): TransferCandidate[] {
-  const banks = db
-    .prepare("SELECT id, name FROM accounts WHERE type = 'BANK'")
-    .all() as { id: string; name: string }[];
-  const cards = db
-    .prepare("SELECT id, name, payment_keyword FROM accounts WHERE type = 'CREDIT_CARD'")
-    .all() as { id: string; name: string; payment_keyword: string | null }[];
+export async function findTransferCandidates(): Promise<TransferCandidate[]> {
+  const db = await getDb();
+  const [accounts, allTx] = await Promise.all([
+    db.getAll("accounts"),
+    db.getAll("transactions"),
+  ]);
+  const banks = accounts.filter((a) => a.type === "BANK");
+  const cards = accounts.filter((a) => a.type === "CREDIT_CARD");
 
   const results: TransferCandidate[] = [];
 
   for (const bank of banks) {
-    const bankTx = db
-      .prepare(
-        `SELECT normalized_name, raw_description, amount FROM transactions
-         WHERE account_id = ? AND type != 'TRANSFER' AND is_manual_category = 0`
-      )
-      .all(bank.id) as { normalized_name: string; raw_description: string; amount: number }[];
+    const bankTx = allTx.filter(
+      (t) => t.account_id === bank.id && t.type !== "TRANSFER" && t.is_manual_category === 0
+    );
 
     for (const card of cards) {
       const keywords = [card.payment_keyword, card.name].filter(

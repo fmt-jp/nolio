@@ -5,31 +5,28 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start",
+    "build:pages": "GITHUB_PAGES=true next build",
+    "serve": "npx serve out",
     "lint": "eslint"
   },
   "dependencies": {
-    "better-sqlite3": "^13.0.3",
     "clsx": "^2.1.1",
     "date-fns": "^4.4.0",
     "encoding-japanese": "^2.3.0",
+    "idb": "^8.0.3",
     "next": "16.3.5",
     "papaparse": "^5.7.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
-    "recharts": "^3.10.1",
-    "uuid": "^14.0.2",
-    "zustand": "^5.0.15"
+    "recharts": "^3.10.1"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
-    "@types/better-sqlite3": "^9.6.0",
     "@types/encoding-japanese": "^2.2.1",
     "@types/node": "^20",
     "@types/papaparse": "^5.5.2",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "@types/uuid": "^10.0.0",
     "eslint": "^9",
     "eslint-config-next": "16.3.5",
     "tailwindcss": "^4",

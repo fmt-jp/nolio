@@ -3,6 +3,9 @@
 銀行口座・クレジットカードの明細（CSV）を取り込み、日々のお金の流れを整理・可視化する個人向けアプリです。
 毎回の手入力を前提とせず、「取り込んだ明細を、自然にお金の流れとして見える化する」ことを目的としています。
 
+サーバーを持たない**完全クライアントサイドの静的サイト**として作られており、GitHub Pagesで公開できます。
+データはすべてブラウザの IndexedDB に保存されます（そのため、別端末・別ブラウザとはデータが共有されません。詳しくは「データの保存場所について」を参照してください）。
+
 ## 主な機能
 
 - **CSV取り込み**: 銀行・クレジットカードのCSV明細を取り込みます。実際のCSVフォーマットは金融機関ごとに異なるため、列の対応付け（日付・摘要・金額など）を画面上で指定できる汎用インポーターを採用しています。文字コード（UTF-8 / Shift_JIS / 自動判定）にも対応しています。口座ごとに一度設定した列マッピングは自動的に記憶され、次回以降の取り込みで再利用されます。
@@ -16,13 +19,22 @@
 
 ## 技術構成
 
-- [Next.js](https://nextjs.org)（App Router）+ TypeScript
-- [better-sqlite3](https://github.com/WiseLibs/better-sqlite3) によるローカルSQLiteデータベース（`data/nolio.db`、初回起動時に自動作成されます）
+- [Next.js](https://nextjs.org)（App Router、`output: "export"` による静的サイト生成）+ TypeScript
+- [idb](https://github.com/jakearchibald/idb) によるブラウザ内データベース（IndexedDB）— サーバー・APIは一切使用しません
 - [Tailwind CSS](https://tailwindcss.com)
 - [Recharts](https://recharts.org) によるグラフ表示
-- [Papa Parse](https://www.papaparse.com) + [encoding-japanese](https://github.com/polygonplanet/encoding.js) によるCSV解析（Shift_JIS対応）
+- [Papa Parse](https://www.papaparse.com) + [encoding-japanese](https://github.com/polygonplanet/encoding.js) によるCSV解析（Shift_JIS対応、すべてブラウザ内で処理）
 
-## セットアップ
+## データの保存場所について
+
+Nolioはサーバーを持たないため、取り込んだ明細はすべて**閲覧しているブラウザのIndexedDB内**に保存されます。
+
+- ✅ サーバー費用なしでGitHub Pagesの無料枠から公開できます
+- ⚠️ 別の端末・別のブラウザ・シークレットモードでは同じデータは見えません（端末ごとに独立しています）
+- ⚠️ ブラウザのサイトデータ／Cookieを削除すると、取り込んだ明細も削除されます
+- 複数端末で使いたい場合は、「設定」→「データエクスポート」でCSVを書き出し、必要な端末で再度取り込んでください
+
+## セットアップ（ローカル開発）
 
 ```bash
 npm install
@@ -31,7 +43,18 @@ npm run dev
 
 [http://localhost:3000](http://localhost:3000) を開いてください。初回はデータが存在しないため、「設定」→「データインポート」から口座を登録し、CSVを取り込んでください。
 
-データベースファイルは `data/` ディレクトリに作成されます（Git管理外）。
+## GitHub Pagesへのデプロイ
+
+`main` ブランチ（および現在の開発ブランチ）への push をトリガーに、`.github/workflows/deploy.yml` が自動でビルド・デプロイします。
+
+初回のみ、リポジトリの **Settings → Pages → Build and deployment → Source** を `GitHub Actions` に設定してください。設定後は `https://<ユーザー名>.github.io/nolio/` で公開されます。
+
+ローカルでGitHub Pages向けの静的ビルドを試す場合:
+
+```bash
+npm run build:pages   # out/ に静的ファイルを生成（/nolio/ 配下を前提としたbasePath付き）
+npm run serve         # out/ を配信して動作確認（ルートパスなので basePath 確認には向きません）
+```
 
 ## データの流れ
 

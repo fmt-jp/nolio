@@ -3,15 +3,14 @@
 import { useEffect, useState } from "react";
 import AccountManager from "./AccountManager";
 import ImportWizard from "./ImportWizard";
+import { listAccounts } from "@/lib/repo";
 import { Account } from "@/lib/types";
 
 export default function ImportSettingsPage() {
   const [accounts, setAccounts] = useState<Account[]>([]);
 
   function load() {
-    fetch("/api/accounts")
-      .then((r) => r.json())
-      .then((d) => setAccounts(d.accounts ?? []));
+    listAccounts().then(setAccounts);
   }
 
   useEffect(load, []);

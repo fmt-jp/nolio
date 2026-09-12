@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { createAccount, deleteAccount } from "@/lib/repo";
 import { Account, AccountType } from "@/lib/types";
 
 export default function AccountManager({
@@ -18,18 +19,14 @@ export default function AccountManager({
   async function addAccount() {
     if (!name.trim()) return;
     setError(null);
-    const res = await fetch("/api/accounts", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    try {
+      await createAccount({
         name: name.trim(),
         type,
         paymentKeyword: paymentKeyword.trim() || null,
-      }),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      setError(data.error);
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "追加に失敗しました");
       return;
     }
     setName("");
@@ -39,10 +36,10 @@ export default function AccountManager({
 
   async function removeAccount(id: string) {
     if (!confirm("この口座を削除しますか？")) return;
-    const res = await fetch(`/api/accounts/${id}`, { method: "DELETE" });
-    const data = await res.json();
-    if (!res.ok) {
-      alert(data.error);
+    try {
+      await deleteAccount(id);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "削除できません");
       return;
     }
     onChange();

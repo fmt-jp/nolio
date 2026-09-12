@@ -1,10 +1,9 @@
 import Encoding from "encoding-japanese";
 import Papa from "papaparse";
-import { createHash } from "crypto";
 import { ImportMapping } from "./types";
 
 export function decodeBuffer(
-  buf: Buffer,
+  buf: ArrayBuffer,
   encoding: "AUTO" | "UTF8" | "SJIS"
 ): string {
   const bytes = new Uint8Array(buf);
@@ -13,7 +12,7 @@ export function decodeBuffer(
     detected = Encoding.detect(bytes) || "UTF8";
   }
   if (detected === "UTF8" || detected === "ASCII" || detected === false) {
-    let text = buf.toString("utf8");
+    let text = new TextDecoder("utf-8").decode(bytes);
     // strip BOM
     if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
     return text;
@@ -205,19 +204,15 @@ export function buildRows(
   return { parsed, errors };
 }
 
+/**
+ * A unique key for duplicate detection. Doesn't need to be cryptographic —
+ * just a stable, collision-free identity for "this exact CSV row".
+ */
 export function dedupeHash(
   date: string,
   rawDescription: string,
   amount: number,
   rawRow: string[]
 ): string {
-  const h = createHash("sha256");
-  h.update(date);
-  h.update("|");
-  h.update(rawDescription);
-  h.update("|");
-  h.update(String(amount));
-  h.update("|");
-  h.update(rawRow.join(","));
-  return h.digest("hex");
+  return [date, rawDescription, String(amount), rawRow.join("")].join("");
 }
