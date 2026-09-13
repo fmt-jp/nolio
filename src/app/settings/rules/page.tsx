@@ -10,11 +10,13 @@ import {
   createNormalizationRule,
   deleteCategoryRule,
   deleteNormalizationRule,
+  getAutoOtherThreshold,
   listAllCategoryRules,
   listAllNormalizationRules,
   listCategories,
   replaceCategoryRules,
   replaceNormalizationRules,
+  setAutoOtherThreshold,
   updateCategoryRule,
   updateNormalizationRule,
 } from "@/lib/repo";
@@ -52,7 +54,11 @@ export default function RulesSettingsPage() {
     setReapplying(true);
     const result = await reapplyRules();
     setReapplying(false);
-    setMessage(`${result.updated}件の明細に最新のルールを適用しました`);
+    setMessage(
+      `${result.updated}件の明細に最新のルールを適用しました${
+        result.autoOther > 0 ? `（うち${result.autoOther}件は少額・1回限りのため「その他」に分類）` : ""
+      }`
+    );
     loadAll();
   }
 
@@ -70,6 +76,8 @@ export default function RulesSettingsPage() {
       </div>
       {message && <p className="text-sm text-emerald-600">{message}</p>}
 
+      <AutoOtherThresholdSection />
+
       <TransferCandidatesSection
         candidates={candidates}
         categories={categories}
@@ -82,6 +90,47 @@ export default function RulesSettingsPage() {
       <NormalizationRulesSection rules={normRules} onChange={loadAll} />
 
       <CategoryRulesSection rules={catRules} categories={categories} onChange={loadAll} />
+    </div>
+  );
+}
+
+function AutoOtherThresholdSection() {
+  const [threshold, setThreshold] = useState<number | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    getAutoOtherThreshold().then(setThreshold);
+  }, []);
+
+  async function save(value: number) {
+    const clamped = Math.max(0, Math.round(value) || 0);
+    setSaving(true);
+    await setAutoOtherThreshold(clamped);
+    setThreshold(clamped);
+    setSaving(false);
+  }
+
+  if (threshold === null) return null;
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+      <h2 className="mb-1 text-sm font-semibold text-slate-600">少額・1回限りの自動分類</h2>
+      <p className="mb-3 text-xs text-slate-400">
+        指定した金額以下で、集計名称が1回しか出てこない明細は、取り込み時や「既存の明細にルールを再適用」の際に自動的に「その他」（収入の場合は「その他収入」）に分類されます。同じお店が2回以上出てきたり、金額が上回る場合は通常どおり分類対象になります。0円にすると無効になります。
+      </p>
+      <div className="flex items-center gap-2">
+        <input
+          type="number"
+          min={0}
+          step={100}
+          className="w-32 rounded-lg border border-slate-300 px-3 py-1.5 text-sm"
+          value={threshold}
+          onChange={(e) => setThreshold(Number(e.target.value))}
+          onBlur={(e) => save(Number(e.target.value))}
+        />
+        <span className="text-sm text-slate-500">円以下</span>
+        {saving && <span className="text-xs text-slate-400">保存中...</span>}
+      </div>
     </div>
   );
 }

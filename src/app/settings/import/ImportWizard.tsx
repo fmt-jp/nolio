@@ -480,6 +480,8 @@ export default function ImportWizard({ accounts }: { accounts: Account[] }) {
               <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">
                 取り込み完了: 新規 {result.newCount}件 / 重複スキップ {result.duplicateCount}件
                 {result.errorCount > 0 && ` / 解析エラー ${result.errorCount}件`}
+                {result.autoOtherCount > 0 &&
+                  ` / うち少額・1回限りのため「その他」に自動分類 ${result.autoOtherCount}件`}
               </div>
               {result.errors.length > 0 && mapping && (
                 <ImportErrorList

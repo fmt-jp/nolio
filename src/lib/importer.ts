@@ -8,6 +8,7 @@ import {
   createCategory,
   createCategoryRule,
   getAccount,
+  getAutoOtherThreshold,
   listAccounts,
   listAllCategoryRules,
   listCategories,
@@ -24,6 +25,7 @@ export interface CommitResult {
   duplicateCount: number;
   errorCount: number;
   errors: RowError[];
+  autoOtherCount: number;
 }
 
 function nowIso(): string {
@@ -116,6 +118,8 @@ export async function commitImport(
 
   await updateAccount(accountId, { importConfig: mapping });
 
+  const { updated: autoOtherCount } = await applyAutoOtherForSmallOneOffs();
+
   return {
     batchId,
     totalRows: rows.length - (mapping.hasHeader ? 1 : 0),
@@ -123,11 +127,12 @@ export async function commitImport(
     duplicateCount,
     errorCount: errors.length,
     errors: errors.slice(0, 50),
+    autoOtherCount,
   };
 }
 
 /** Re-apply current normalization/category rules to existing transactions that were not manually edited. */
-export async function reapplyRules(): Promise<{ updated: number }> {
+export async function reapplyRules(): Promise<{ updated: number; autoOther: number }> {
   const db = await getDb();
   const [normRules, catRules, categories, allTx] = await Promise.all([
     listNormalizationRules(),
@@ -166,6 +171,56 @@ export async function reapplyRules(): Promise<{ updated: number }> {
       type: categoryType,
       updated_at: nowIso(),
     });
+  }
+
+  if (toUpdate.length > 0) {
+    const tx = db.transaction("transactions", "readwrite");
+    await Promise.all([...toUpdate.map((t) => tx.store.put(t)), tx.done]);
+  }
+
+  const { updated: autoOther } = await applyAutoOtherForSmallOneOffs();
+
+  return { updated: toUpdate.length, autoOther };
+}
+
+/**
+ * Files away merchants that only ever show up once, for amounts at or below the
+ * user's threshold, into "その他"/"その他収入" — so the "未分類をまとめて分類"
+ * list only surfaces merchants worth a human's attention (recurring or costly).
+ * Leaves manually-categorized transactions untouched.
+ */
+export async function applyAutoOtherForSmallOneOffs(): Promise<{ updated: number }> {
+  const threshold = await getAutoOtherThreshold();
+  if (threshold <= 0) return { updated: 0 };
+
+  const db = await getDb();
+  const [allTx, categories] = await Promise.all([db.getAll("transactions"), listCategories()]);
+  const categoryMap = new Map(categories.map((c) => [c.id, c]));
+  const otherExpense = categories.find((c) => c.type === "EXPENSE" && c.name === "その他");
+  const otherIncome = categories.find((c) => c.type === "INCOME" && c.name === "その他収入");
+
+  const groups = new Map<string, Transaction[]>();
+  for (const t of allTx) {
+    if (t.is_manual_category) continue;
+    const category = t.category_id ? categoryMap.get(t.category_id) : undefined;
+    if (!category?.is_system) continue; // only still-未分類 transactions
+    if (t.type !== "INCOME" && t.type !== "EXPENSE") continue;
+
+    const key = `${t.normalized_name}${t.type}`;
+    const arr = groups.get(key);
+    if (arr) arr.push(t);
+    else groups.set(key, [t]);
+  }
+
+  const now = nowIso();
+  const toUpdate: Transaction[] = [];
+  for (const txs of groups.values()) {
+    if (txs.length !== 1) continue; // recurring merchants stay for real review
+    const t = txs[0];
+    if (Math.abs(t.amount) > threshold) continue;
+    const target = t.type === "EXPENSE" ? otherExpense : otherIncome;
+    if (!target) continue;
+    toUpdate.push({ ...t, category_id: target.id, type: target.type, updated_at: now });
   }
 
   if (toUpdate.length > 0) {

@@ -524,3 +524,26 @@ export async function getMeta(): Promise<{
   ]);
   return { months, years, accounts, categories };
 }
+
+// ---------- App settings (key-value, stored in the "meta" store) ----------
+const AUTO_OTHER_THRESHOLD_KEY = "autoOtherThresholdYen";
+const DEFAULT_AUTO_OTHER_THRESHOLD = 1000;
+
+/** Amount (yen) at or below which a merchant that only ever appears once is
+ * automatically filed under "その他"/"その他収入" instead of being left 未分類.
+ * 0 disables the feature. */
+export async function getAutoOtherThreshold(): Promise<number> {
+  const db = await getDb();
+  const row = await db.get("meta", AUTO_OTHER_THRESHOLD_KEY);
+  if (!row) return DEFAULT_AUTO_OTHER_THRESHOLD;
+  const n = Number(row.value);
+  return Number.isFinite(n) && n >= 0 ? n : DEFAULT_AUTO_OTHER_THRESHOLD;
+}
+
+export async function setAutoOtherThreshold(yen: number): Promise<void> {
+  const db = await getDb();
+  await db.put("meta", {
+    key: AUTO_OTHER_THRESHOLD_KEY,
+    value: String(Math.max(0, Math.round(yen))),
+  });
+}
