@@ -1,16 +1,19 @@
 import { getDb } from "./idbClient";
 import { uid } from "./id";
-import { buildRows, dedupeHash, RowError } from "./csv";
+import { buildRows, dedupeHash, parseCsvText, RowError } from "./csv";
 import { applyCategoryRules, applyNormalization } from "./rules";
 import { getUncategorizedCategoryId } from "./seed";
 import {
+  createAccount,
+  createCategory,
   getAccount,
+  listAccounts,
   listCategories,
   listCategoryRules,
   listNormalizationRules,
   updateAccount,
 } from "./repo";
-import { ImportMapping, Transaction } from "./types";
+import { AccountType, ImportMapping, Transaction, TxType } from "./types";
 
 export interface CommitResult {
   batchId: string;
@@ -223,4 +226,124 @@ export async function findTransferCandidates(): Promise<TransferCandidate[]> {
   }
 
   return results;
+}
+
+export interface RestoreResult {
+  newCount: number;
+  duplicateCount: number;
+  errorCount: number;
+  accountsCreated: number;
+  categoriesCreated: number;
+}
+
+const ACCOUNT_TYPE_JA: Record<string, AccountType> = {
+  銀行: "BANK",
+  クレジットカード: "CREDIT_CARD",
+};
+const TX_TYPE_JA: Record<string, TxType> = {
+  収入: "INCOME",
+  支出: "EXPENSE",
+  資金移動: "TRANSFER",
+};
+
+/**
+ * Restore transactions from a CSV produced by this app's own "データエクスポート"
+ * (設定 → データインポート → Nolioのエクスポートデータ). Accounts and categories
+ * are matched by name (their ids are per-browser and not portable), and created
+ * automatically when missing — this is how data moves between browsers/devices.
+ */
+export async function restoreFromNolioExport(csvText: string): Promise<RestoreResult> {
+  const { rows } = parseCsvText(csvText, ",");
+  const dataRows = rows.slice(1); // fixed header row from our own export
+  if (dataRows.length === 0) throw new Error("CSVを解析できませんでした");
+
+  const [accounts, categories] = await Promise.all([listAccounts(), listCategories()]);
+  const accountByKey = new Map(accounts.map((a) => [`${a.name}${a.type}`, a]));
+  const categoryByKey = new Map(categories.map((c) => [`${c.name}${c.type}`, c]));
+
+  const db = await getDb();
+  const existingHashCache = new Map<string, Set<string>>();
+  async function getExistingHashes(accountId: string): Promise<Set<string>> {
+    let set = existingHashCache.get(accountId);
+    if (!set) {
+      const existing = await db.getAllFromIndex("transactions", "by_account", accountId);
+      set = new Set(existing.map((t) => t.dedupe_hash));
+      existingHashCache.set(accountId, set);
+    }
+    return set;
+  }
+
+  let accountsCreated = 0;
+  let categoriesCreated = 0;
+  let newCount = 0;
+  let duplicateCount = 0;
+  let errorCount = 0;
+  const now = nowIso();
+  const newTransactions: Transaction[] = [];
+
+  for (const row of dataRows) {
+    const [date, accountName, accountTypeJa, rawDescription, normalizedName, categoryName, txTypeJa, amountStr, memo] =
+      row;
+    const accountType = ACCOUNT_TYPE_JA[accountTypeJa];
+    const txType = TX_TYPE_JA[txTypeJa];
+    const amount = Number(amountStr);
+    if (!date || !accountName || !accountType || !txType || !rawDescription || Number.isNaN(amount)) {
+      errorCount++;
+      continue;
+    }
+
+    const accountKey = `${accountName}${accountType}`;
+    let account = accountByKey.get(accountKey);
+    if (!account) {
+      account = await createAccount({ name: accountName, type: accountType });
+      accountByKey.set(accountKey, account);
+      accountsCreated++;
+    }
+
+    const categoryKey = `${categoryName}${txType}`;
+    let category = categoryName ? categoryByKey.get(categoryKey) : undefined;
+    if (!category && categoryName) {
+      category = await createCategory({ name: categoryName, type: txType });
+      categoryByKey.set(categoryKey, category);
+      categoriesCreated++;
+    }
+    const categoryId = category
+      ? category.id
+      : await getUncategorizedCategoryId(txType === "EXPENSE" ? "EXPENSE" : "INCOME");
+
+    const hash = dedupeHash(date, rawDescription, amount, row);
+    const existingHashes = await getExistingHashes(account.id);
+    if (existingHashes.has(hash)) {
+      duplicateCount++;
+      continue;
+    }
+    existingHashes.add(hash);
+
+    newTransactions.push({
+      id: uid(),
+      account_id: account.id,
+      import_batch_id: null,
+      date,
+      raw_description: rawDescription,
+      normalized_name: normalizedName || rawDescription,
+      category_id: categoryId,
+      type: txType,
+      amount,
+      memo: memo || null,
+      raw_row: JSON.stringify(row),
+      dedupe_hash: hash,
+      is_manual_category: 0,
+      is_manual_name: normalizedName && normalizedName !== rawDescription ? 1 : 0,
+      created_at: now,
+      updated_at: now,
+    });
+    newCount++;
+  }
+
+  if (newTransactions.length > 0) {
+    const tx = db.transaction("transactions", "readwrite");
+    await Promise.all([...newTransactions.map((t) => tx.store.put(t)), tx.done]);
+  }
+
+  return { newCount, duplicateCount, errorCount, accountsCreated, categoriesCreated };
 }

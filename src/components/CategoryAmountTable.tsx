@@ -1,0 +1,59 @@
+"use client";
+
+import { formatYen } from "@/lib/format";
+import { CategoryBreakdownItem } from "@/lib/summary";
+
+export default function CategoryAmountTable({ items }: { items: CategoryBreakdownItem[] }) {
+  if (items.length === 0) {
+    return (
+      <div className="flex h-24 items-center justify-center text-sm text-slate-400">
+        データがありません
+      </div>
+    );
+  }
+
+  const total = items.reduce((s, i) => s + i.amount, 0);
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-slate-100 text-left text-xs text-slate-400">
+            <th className="pb-2 font-normal">カテゴリ</th>
+            <th className="pb-2 text-right font-normal">金額</th>
+            <th className="pb-2 text-right font-normal">割合</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((item) => (
+            <tr
+              key={item.categoryId ?? item.categoryName}
+              className="border-b border-slate-50 last:border-0"
+            >
+              <td className="py-2">
+                <span
+                  className="mr-2 inline-block h-2 w-2 rounded-full align-middle"
+                  style={{ backgroundColor: item.color ?? "#94a3b8" }}
+                />
+                <span className="align-middle text-slate-700">{item.categoryName}</span>
+              </td>
+              <td className="py-2 text-right font-medium text-slate-800">
+                {formatYen(item.amount)}
+              </td>
+              <td className="py-2 text-right text-slate-400">
+                {(item.ratio * 100).toFixed(1)}%
+              </td>
+            </tr>
+          ))}
+        </tbody>
+        <tfoot>
+          <tr className="border-t border-slate-200 text-sm font-semibold">
+            <td className="pt-2 text-slate-600">合計</td>
+            <td className="pt-2 text-right text-slate-800">{formatYen(total)}</td>
+            <td className="pt-2 text-right text-slate-400">100.0%</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  );
+}

@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { CategoryRule, MatchType, NormalizationRule, Category } from "@/lib/types";
+import { useEffect, useRef, useState } from "react";
+import { CategoryRule, MatchType, NormalizationRule, Category, TxType } from "@/lib/types";
 import { formatYen } from "@/lib/format";
 import { findTransferCandidates, reapplyRules, TransferCandidate } from "@/lib/importer";
 import {
+  createCategory,
   createCategoryRule,
   createNormalizationRule,
   deleteCategoryRule,
@@ -12,9 +13,23 @@ import {
   listAllCategoryRules,
   listAllNormalizationRules,
   listCategories,
+  replaceCategoryRules,
+  replaceNormalizationRules,
   updateCategoryRule,
   updateNormalizationRule,
 } from "@/lib/repo";
+
+function downloadJson(filename: string, data: unknown) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
 
 export default function RulesSettingsPage() {
   const [normRules, setNormRules] = useState<NormalizationRule[]>([]);
@@ -149,6 +164,43 @@ function NormalizationRulesSection({
   const [pattern, setPattern] = useState("");
   const [replacement, setReplacement] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  function exportRules() {
+    downloadJson("nolio_normalization_rules.json", {
+      kind: "nolio-normalization-rules",
+      version: 1,
+      rules: rules.map((r) => ({
+        matchType: r.match_type,
+        pattern: r.pattern,
+        replacement: r.replacement,
+        priority: r.priority,
+        enabled: !!r.enabled,
+      })),
+    });
+  }
+
+  async function importRules(file: File) {
+    setError(null);
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text);
+      if (data?.kind !== "nolio-normalization-rules" || !Array.isArray(data.rules)) {
+        throw new Error("正規化ルールのファイルではないようです");
+      }
+      if (
+        !confirm(
+          `現在の正規化ルール（${rules.length}件）をすべて削除し、ファイルの内容（${data.rules.length}件）で上書きします。よろしいですか？`
+        )
+      ) {
+        return;
+      }
+      await replaceNormalizationRules(data.rules);
+      onChange();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "インポートに失敗しました");
+    }
+  }
 
   async function add() {
     setError(null);
@@ -182,7 +234,35 @@ function NormalizationRulesSection({
 
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-4">
-      <h2 className="mb-1 text-sm font-semibold text-slate-600">明細名称の正規化ルール</h2>
+      <div className="mb-1 flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-slate-600">明細名称の正規化ルール</h2>
+        <div className="flex gap-2">
+          <button
+            onClick={exportRules}
+            disabled={rules.length === 0}
+            className="text-xs font-medium text-slate-500 hover:text-slate-700 disabled:opacity-40"
+          >
+            エクスポート
+          </button>
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            className="text-xs font-medium text-slate-500 hover:text-slate-700"
+          >
+            インポート
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="application/json"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) importRules(f);
+              e.target.value = "";
+            }}
+          />
+        </div>
+      </div>
       <p className="mb-3 text-xs text-slate-400">
         例: 「含む」に「水道代」、置換後の名称に「水道代」と設定すると、「水道代（1月分）」「水道代（2月分）」がすべて「水道代」としてまとめられます。正規表現も利用できます（置換に $1 などのキャプチャが使えます）。
       </p>
@@ -264,10 +344,81 @@ function CategoryRulesSection({
   const [pattern, setPattern] = useState("");
   const [categoryId, setCategoryId] = useState(categories[0]?.id ?? "");
   const [error, setError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!categoryId && categories.length > 0) setCategoryId(categories[0].id);
   }, [categories, categoryId]);
+
+  function exportRules() {
+    const categoryMap = new Map(categories.map((c) => [c.id, c]));
+    downloadJson("nolio_category_rules.json", {
+      kind: "nolio-category-rules",
+      version: 1,
+      rules: rules.map((r) => ({
+        matchType: r.match_type,
+        pattern: r.pattern,
+        categoryName: categoryMap.get(r.category_id)?.name ?? "",
+        categoryType: categoryMap.get(r.category_id)?.type ?? "EXPENSE",
+        priority: r.priority,
+        enabled: !!r.enabled,
+      })),
+    });
+  }
+
+  async function importRules(file: File) {
+    setError(null);
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text);
+      if (data?.kind !== "nolio-category-rules" || !Array.isArray(data.rules)) {
+        throw new Error("カテゴリ分類ルールのファイルではないようです");
+      }
+      if (
+        !confirm(
+          `現在のカテゴリ分類ルール（${rules.length}件）をすべて削除し、ファイルの内容（${data.rules.length}件）で上書きします。カテゴリ名が一致しない場合は新しいカテゴリを作成します。よろしいですか？`
+        )
+      ) {
+        return;
+      }
+      const currentCategories = await listCategories();
+      const categoryByKey = new Map(currentCategories.map((c) => [`${c.name}${c.type}`, c]));
+      const resolved: {
+        matchType: MatchType;
+        pattern: string;
+        categoryId: string;
+        priority: number;
+        enabled: boolean;
+      }[] = [];
+      for (const r of data.rules as {
+        matchType: MatchType;
+        pattern: string;
+        categoryName: string;
+        categoryType: TxType;
+        priority?: number;
+        enabled?: boolean;
+      }[]) {
+        if (!r.pattern || !r.categoryName || !r.categoryType) continue;
+        const key = `${r.categoryName}${r.categoryType}`;
+        let category = categoryByKey.get(key);
+        if (!category) {
+          category = await createCategory({ name: r.categoryName, type: r.categoryType });
+          categoryByKey.set(key, category);
+        }
+        resolved.push({
+          matchType: r.matchType,
+          pattern: r.pattern,
+          categoryId: category.id,
+          priority: r.priority ?? 0,
+          enabled: r.enabled !== false,
+        });
+      }
+      await replaceCategoryRules(resolved);
+      onChange();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "インポートに失敗しました");
+    }
+  }
 
   async function add() {
     setError(null);
@@ -302,7 +453,35 @@ function CategoryRulesSection({
 
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-4">
-      <h2 className="mb-1 text-sm font-semibold text-slate-600">カテゴリ分類ルール</h2>
+      <div className="mb-1 flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-slate-600">カテゴリ分類ルール</h2>
+        <div className="flex gap-2">
+          <button
+            onClick={exportRules}
+            disabled={rules.length === 0}
+            className="text-xs font-medium text-slate-500 hover:text-slate-700 disabled:opacity-40"
+          >
+            エクスポート
+          </button>
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            className="text-xs font-medium text-slate-500 hover:text-slate-700"
+          >
+            インポート
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="application/json"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) importRules(f);
+              e.target.value = "";
+            }}
+          />
+        </div>
+      </div>
       <p className="mb-3 text-xs text-slate-400">
         例: 「含む」に「セブンイレブン」、カテゴリに「食費」と設定すると、以後「セブンイレブン」を含む明細は自動的に食費に分類されます。
       </p>

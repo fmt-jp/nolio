@@ -5,6 +5,7 @@ import clsx from "clsx";
 import MonthSwitcher from "@/components/MonthSwitcher";
 import TrendBarChart from "@/components/charts/TrendBarChart";
 import CategoryPieChart from "@/components/charts/CategoryPieChart";
+import CategoryAmountTable from "@/components/CategoryAmountTable";
 import MerchantRankingList from "@/components/MerchantRankingList";
 import { currentYearMonth, formatSignedYen, formatYen } from "@/lib/format";
 import {
@@ -177,13 +178,22 @@ export default function AnalysisPage() {
         {loading ? (
           <ChartSkeleton />
         ) : (
-          <CategoryPieChart
-            data={
-              breakdownType === "EXPENSE"
-                ? summary?.expenseBreakdown ?? []
-                : summary?.incomeBreakdown ?? []
-            }
-          />
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <CategoryPieChart
+              data={
+                breakdownType === "EXPENSE"
+                  ? summary?.expenseBreakdown ?? []
+                  : summary?.incomeBreakdown ?? []
+              }
+            />
+            <CategoryAmountTable
+              items={
+                breakdownType === "EXPENSE"
+                  ? summary?.expenseBreakdown ?? []
+                  : summary?.incomeBreakdown ?? []
+              }
+            />
+          </div>
         )}
       </div>
 

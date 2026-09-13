@@ -47,53 +47,60 @@ export default function ImportWizard({ accounts }: { accounts: Account[] }) {
 
   const MAX_SIZE = 8 * 1024 * 1024; // 8MB
 
+  async function buildPreviewData(): Promise<{ data: PreviewData; mapping: ImportMapping }> {
+    if (!file || !accountId) throw new Error("口座とファイルを選択してください");
+    if (file.size > MAX_SIZE) {
+      throw new Error("ファイルサイズが大きすぎます (8MB以下)");
+    }
+    const buf = await file.arrayBuffer();
+    const text = decodeBuffer(buf, encoding);
+    const { rows, rowCount } = parseCsvText(text, delimiter);
+    if (rowCount === 0) throw new Error("CSVを解析できませんでした");
+
+    const account = await getAccount(accountId);
+    let existingMapping: ImportMapping | null = null;
+    if (account?.import_config) {
+      try {
+        existingMapping = JSON.parse(account.import_config);
+      } catch {
+        existingMapping = null;
+      }
+    }
+    const sm = existingMapping ?? guessMapping(rows, account?.type);
+
+    const data: PreviewData = {
+      rows,
+      sampleRows: rows.slice(0, 30),
+      columnCount: rows.reduce((max, r) => Math.max(max, r.length), 0),
+      rowCount,
+      suggestedMapping: sm,
+      hasSavedMapping: !!existingMapping,
+    };
+    const newMapping: ImportMapping = {
+      encoding,
+      skipRows: sm.skipRows ?? 0,
+      hasHeader: sm.hasHeader ?? true,
+      delimiter,
+      dateColumnIndex: sm.dateColumnIndex ?? 0,
+      descriptionColumnIndex: sm.descriptionColumnIndex ?? 1,
+      descriptionColumnIndex2: sm.descriptionColumnIndex2 ?? null,
+      amountMode: sm.amountMode ?? "SIGNED_SINGLE",
+      amountColumnIndex: sm.amountColumnIndex ?? 2,
+      incomeColumnIndex: sm.incomeColumnIndex ?? null,
+      expenseColumnIndex: sm.expenseColumnIndex ?? null,
+      memoColumnIndex: sm.memoColumnIndex ?? null,
+    };
+    return { data, mapping: newMapping };
+  }
+
   async function handlePreview() {
-    if (!file || !accountId) return;
     setLoadingPreview(true);
     setPreviewError(null);
     setResult(null);
     try {
-      if (file.size > MAX_SIZE) {
-        throw new Error("ファイルサイズが大きすぎます (8MB以下)");
-      }
-      const buf = await file.arrayBuffer();
-      const text = decodeBuffer(buf, encoding);
-      const { rows, rowCount } = parseCsvText(text, delimiter);
-      if (rowCount === 0) throw new Error("CSVを解析できませんでした");
-
-      const account = await getAccount(accountId);
-      let existingMapping: ImportMapping | null = null;
-      if (account?.import_config) {
-        try {
-          existingMapping = JSON.parse(account.import_config);
-        } catch {
-          existingMapping = null;
-        }
-      }
-      const sm = existingMapping ?? guessMapping(rows, account?.type);
-
-      setPreview({
-        rows,
-        sampleRows: rows.slice(0, 30),
-        columnCount: rows.reduce((max, r) => Math.max(max, r.length), 0),
-        rowCount,
-        suggestedMapping: sm,
-        hasSavedMapping: !!existingMapping,
-      });
-      setMapping({
-        encoding,
-        skipRows: sm.skipRows ?? 0,
-        hasHeader: sm.hasHeader ?? true,
-        delimiter,
-        dateColumnIndex: sm.dateColumnIndex ?? 0,
-        descriptionColumnIndex: sm.descriptionColumnIndex ?? 1,
-        descriptionColumnIndex2: sm.descriptionColumnIndex2 ?? null,
-        amountMode: sm.amountMode ?? "SIGNED_SINGLE",
-        amountColumnIndex: sm.amountColumnIndex ?? 2,
-        incomeColumnIndex: sm.incomeColumnIndex ?? null,
-        expenseColumnIndex: sm.expenseColumnIndex ?? null,
-        memoColumnIndex: sm.memoColumnIndex ?? null,
-      });
+      const { data, mapping: newMapping } = await buildPreviewData();
+      setPreview(data);
+      setMapping(newMapping);
     } catch (e) {
       setPreviewError(e instanceof Error ? e.message : "プレビューに失敗しました");
       setPreview(null);
@@ -112,6 +119,27 @@ export default function ImportWizard({ accounts }: { accounts: Account[] }) {
     } catch (e) {
       setCommitError(e instanceof Error ? e.message : "取り込みに失敗しました");
     } finally {
+      setCommitting(false);
+    }
+  }
+
+  async function handleQuickImport() {
+    setLoadingPreview(true);
+    setPreviewError(null);
+    setResult(null);
+    setCommitError(null);
+    try {
+      const { data, mapping: newMapping } = await buildPreviewData();
+      setPreview(data);
+      setMapping(newMapping);
+      setLoadingPreview(false);
+      setCommitting(true);
+      const commitResult = await commitImport(accountId, data.rows, newMapping, file?.name ?? null);
+      setResult(commitResult);
+    } catch (e) {
+      setPreviewError(e instanceof Error ? e.message : "取り込みに失敗しました");
+    } finally {
+      setLoadingPreview(false);
       setCommitting(false);
     }
   }
@@ -201,10 +229,18 @@ export default function ImportWizard({ accounts }: { accounts: Account[] }) {
             </label>
             <button
               onClick={handlePreview}
-              disabled={!file || loadingPreview}
+              disabled={!file || loadingPreview || committing}
               className="rounded-lg bg-slate-900 px-4 py-1.5 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50"
             >
-              {loadingPreview ? "読み込み中..." : "プレビュー"}
+              {loadingPreview && !committing ? "読み込み中..." : "プレビュー"}
+            </button>
+            <button
+              onClick={handleQuickImport}
+              disabled={!file || loadingPreview || committing}
+              title="内容を確認せずに、そのまま取り込みます（口座に保存済みの列設定がある場合はそれを使用）"
+              className="rounded-lg border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+            >
+              {committing ? "取り込み中..." : "プレビューせず取り込む"}
             </button>
           </div>
           {previewError && <p className="mb-3 text-sm text-red-600">{previewError}</p>}

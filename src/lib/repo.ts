@@ -301,6 +301,68 @@ export async function deleteCategoryRule(id: string): Promise<void> {
   await db.delete("categoryRules", id);
 }
 
+/** Deletes every existing normalization rule and replaces them with the given set. */
+export async function replaceNormalizationRules(
+  rules: {
+    matchType: "CONTAINS" | "REGEX";
+    pattern: string;
+    replacement: string;
+    priority?: number;
+    enabled?: boolean;
+  }[]
+): Promise<void> {
+  const db = await getDb();
+  const existing = await db.getAll("normalizationRules");
+  const now = nowIso();
+  const tx = db.transaction("normalizationRules", "readwrite");
+  await Promise.all([
+    ...existing.map((r) => tx.store.delete(r.id)),
+    ...rules.map((r) =>
+      tx.store.put({
+        id: uid(),
+        match_type: r.matchType,
+        pattern: r.pattern,
+        replacement: r.replacement,
+        priority: r.priority ?? 0,
+        enabled: r.enabled === false ? 0 : 1,
+        created_at: now,
+      })
+    ),
+    tx.done,
+  ]);
+}
+
+/** Deletes every existing category rule and replaces them with the given set. */
+export async function replaceCategoryRules(
+  rules: {
+    matchType: MatchType;
+    pattern: string;
+    categoryId: string;
+    priority?: number;
+    enabled?: boolean;
+  }[]
+): Promise<void> {
+  const db = await getDb();
+  const existing = await db.getAll("categoryRules");
+  const now = nowIso();
+  const tx = db.transaction("categoryRules", "readwrite");
+  await Promise.all([
+    ...existing.map((r) => tx.store.delete(r.id)),
+    ...rules.map((r) =>
+      tx.store.put({
+        id: uid(),
+        match_type: r.matchType,
+        pattern: r.pattern,
+        category_id: r.categoryId,
+        priority: r.priority ?? 0,
+        enabled: r.enabled === false ? 0 : 1,
+        created_at: now,
+      })
+    ),
+    tx.done,
+  ]);
+}
+
 // ---------- Transactions ----------
 export interface TransactionFilter {
   yearMonth?: string; // YYYY-MM
