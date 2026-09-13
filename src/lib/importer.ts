@@ -1,13 +1,15 @@
 import { getDb } from "./idbClient";
 import { uid } from "./id";
 import { buildRows, dedupeHash, parseCsvText, RowError } from "./csv";
-import { applyCategoryRules, applyNormalization } from "./rules";
+import { applyBuiltinCategory, applyCategoryRules, applyNormalization } from "./rules";
 import { getUncategorizedCategoryId } from "./seed";
 import {
   createAccount,
   createCategory,
+  createCategoryRule,
   getAccount,
   listAccounts,
+  listAllCategoryRules,
   listCategories,
   listCategoryRules,
   listNormalizationRules,
@@ -69,10 +71,11 @@ export async function commitImport(
 
     const { name: normalizedName } = applyNormalization(row.rawDescription, normRules);
     const ruleCategoryId = applyCategoryRules(normalizedName, row.rawDescription, catRules);
+    const builtinCategoryId = applyBuiltinCategory(normalizedName, row.rawDescription, categories);
     const defaultCategoryId = await getUncategorizedCategoryId(
       row.amount >= 0 ? "INCOME" : "EXPENSE"
     );
-    const categoryId = ruleCategoryId ?? defaultCategoryId;
+    const categoryId = ruleCategoryId ?? builtinCategoryId ?? defaultCategoryId;
     const categoryType = categoryMap.get(categoryId)?.type ?? "EXPENSE";
 
     newTransactions.push({
@@ -149,10 +152,11 @@ export async function reapplyRules(): Promise<{ updated: number }> {
     }
 
     const ruleCategoryId = applyCategoryRules(normalizedName, t.raw_description, catRules);
+    const builtinCategoryId = applyBuiltinCategory(normalizedName, t.raw_description, categories);
     const defaultCategoryId = await getUncategorizedCategoryId(
       t.amount >= 0 ? "INCOME" : "EXPENSE"
     );
-    const categoryId = ruleCategoryId ?? defaultCategoryId;
+    const categoryId = ruleCategoryId ?? builtinCategoryId ?? defaultCategoryId;
     const categoryType = categoryMap.get(categoryId)?.type ?? "EXPENSE";
 
     toUpdate.push({
@@ -346,4 +350,91 @@ export async function restoreFromNolioExport(csvText: string): Promise<RestoreRe
   }
 
   return { newCount, duplicateCount, errorCount, accountsCreated, categoriesCreated };
+}
+
+export interface UncategorizedGroup {
+  normalizedName: string;
+  type: "INCOME" | "EXPENSE";
+  count: number;
+  totalAmount: number;
+  transactionIds: string[];
+  suggestedCategoryId: string | null;
+}
+
+/** Groups every still-未分類 transaction by its aggregation name, so the user can
+ * categorize a whole merchant at once instead of transaction-by-transaction. */
+export async function getUncategorizedGroups(): Promise<UncategorizedGroup[]> {
+  const db = await getDb();
+  const [allTx, categories] = await Promise.all([db.getAll("transactions"), listCategories()]);
+  const categoryMap = new Map(categories.map((c) => [c.id, c]));
+
+  const groups = new Map<string, UncategorizedGroup>();
+  for (const t of allTx) {
+    const category = t.category_id ? categoryMap.get(t.category_id) : undefined;
+    if (!category?.is_system) continue; // only 未分類(収入)/未分類(支出)
+    if (t.type !== "INCOME" && t.type !== "EXPENSE") continue;
+
+    const key = `${t.normalized_name}${t.type}`;
+    let g = groups.get(key);
+    if (!g) {
+      g = {
+        normalizedName: t.normalized_name,
+        type: t.type,
+        count: 0,
+        totalAmount: 0,
+        transactionIds: [],
+        suggestedCategoryId: applyBuiltinCategory(t.normalized_name, t.raw_description, categories),
+      };
+      groups.set(key, g);
+    }
+    g.count++;
+    g.totalAmount += Math.abs(t.amount);
+    g.transactionIds.push(t.id);
+  }
+
+  return [...groups.values()].sort((a, b) => b.totalAmount - a.totalAmount);
+}
+
+/** Assigns a category to every transaction in the group, and remembers the choice
+ * as a category rule so future imports of the same merchant are classified automatically. */
+export async function applyCategoryToGroup(
+  transactionIds: string[],
+  categoryId: string,
+  normalizedName: string
+): Promise<void> {
+  const db = await getDb();
+  const category = await db.get("categories", categoryId);
+  if (!category) throw new Error("カテゴリが見つかりません");
+
+  const records = await Promise.all(transactionIds.map((id) => db.get("transactions", id)));
+  const now = nowIso();
+  const tx = db.transaction("transactions", "readwrite");
+  await Promise.all([
+    ...records
+      .filter((t): t is Transaction => !!t)
+      .map((t) =>
+        tx.store.put({
+          ...t,
+          category_id: categoryId,
+          type: category.type,
+          is_manual_category: 1,
+          updated_at: now,
+        })
+      ),
+    tx.done,
+  ]);
+
+  const existingRules = await listAllCategoryRules();
+  const alreadyExists = existingRules.some(
+    (r) =>
+      r.match_type === "CONTAINS" && r.pattern === normalizedName && r.category_id === categoryId
+  );
+  if (!alreadyExists) {
+    await createCategoryRule({
+      matchType: "CONTAINS",
+      pattern: normalizedName,
+      categoryId,
+      priority: 5,
+    });
+  }
 }

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import TransactionEditModal from "@/components/TransactionEditModal";
+import BulkCategorizePanel from "@/components/BulkCategorizePanel";
 import { formatDateLabel, formatYen, typeLabel } from "@/lib/format";
 import {
   deleteTransactions,
@@ -102,6 +103,16 @@ export default function TransactionsPage() {
     });
   }
 
+  async function refreshList() {
+    const data = await listTransactions(filter);
+    if (data.items.length === 0 && page > 1) {
+      setPage((p) => p - 1);
+    } else {
+      setItems(data.items);
+      setTotal(data.total);
+    }
+  }
+
   async function handleDeleteSelected() {
     if (selectedIds.size === 0) return;
     if (
@@ -114,19 +125,15 @@ export default function TransactionsPage() {
     setDeleting(true);
     await deleteTransactions([...selectedIds]);
     setSelectedIds(new Set());
-    const data = await listTransactions(filter);
-    if (data.items.length === 0 && page > 1) {
-      setPage((p) => p - 1);
-    } else {
-      setItems(data.items);
-      setTotal(data.total);
-    }
+    await refreshList();
     setDeleting(false);
   }
 
   return (
     <div className="flex flex-col gap-4">
       <h1 className="text-xl font-bold">明細</h1>
+
+      <BulkCategorizePanel categories={categories} onApplied={refreshList} />
 
       <div className="grid grid-cols-2 gap-2 rounded-2xl border border-slate-200 bg-white p-3 sm:grid-cols-5">
         <input
