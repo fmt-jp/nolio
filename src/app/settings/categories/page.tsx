@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createCategory, deleteCategory, listCategories, updateCategory } from "@/lib/repo";
 import { Category, TxType } from "@/lib/types";
 
@@ -12,12 +12,25 @@ const TYPE_LABELS: Record<TxType, string> = {
 
 const TYPE_ORDER: TxType[] = ["INCOME", "EXPENSE", "TRANSFER"];
 
+function downloadJson(filename: string, data: unknown) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 export default function CategoriesSettingsPage() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
   const [newName, setNewName] = useState("");
   const [newType, setNewType] = useState<TxType>("EXPENSE");
   const [error, setError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   function load() {
     setLoading(true);
@@ -75,9 +88,99 @@ export default function CategoriesSettingsPage() {
     load();
   }
 
+  function exportCategories() {
+    downloadJson("nolio_categories.json", {
+      kind: "nolio-categories",
+      version: 1,
+      categories: categories.map((c) => ({
+        name: c.name,
+        type: c.type,
+        color: c.color,
+        sortOrder: c.sort_order,
+      })),
+    });
+  }
+
+  async function importCategories(file: File) {
+    setError(null);
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text);
+      if (data?.kind !== "nolio-categories" || !Array.isArray(data.categories)) {
+        throw new Error("カテゴリ定義のファイルではないようです");
+      }
+      if (
+        !confirm(
+          `ファイルの内容（${data.categories.length}件）を現在のカテゴリ定義にマージします。名称・種別が一致すれば色や並び順を更新し、一致しなければ新しいカテゴリとして追加します。既存のカテゴリが削除されることはありません。よろしいですか？`
+        )
+      ) {
+        return;
+      }
+      const current = await listCategories();
+      const byKey = new Map(current.map((c) => [JSON.stringify([c.name, c.type]), c]));
+      for (const item of data.categories as {
+        name: string;
+        type: TxType;
+        color?: string | null;
+        sortOrder?: number;
+      }[]) {
+        if (!item.name || !item.type) continue;
+        const key = JSON.stringify([item.name, item.type]);
+        const existing = byKey.get(key);
+        if (existing) {
+          await updateCategory(existing.id, {
+            color: item.color ?? existing.color,
+            sortOrder: item.sortOrder ?? existing.sort_order,
+          });
+        } else {
+          const created = await createCategory({
+            name: item.name,
+            type: item.type,
+            color: item.color ?? null,
+          });
+          if (item.sortOrder !== undefined) {
+            await updateCategory(created.id, { sortOrder: item.sortOrder });
+          }
+          byKey.set(key, created);
+        }
+      }
+      load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "インポートに失敗しました");
+    }
+  }
+
   return (
     <div className="flex flex-col gap-6">
-      <h1 className="text-xl font-bold">カテゴリ設定</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-xl font-bold">カテゴリ設定</h1>
+        <div className="flex gap-2">
+          <button
+            onClick={exportCategories}
+            disabled={categories.length === 0}
+            className="text-xs font-medium text-slate-500 hover:text-slate-700 disabled:opacity-40"
+          >
+            エクスポート
+          </button>
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            className="text-xs font-medium text-slate-500 hover:text-slate-700"
+          >
+            インポート
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="application/json"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) importCategories(f);
+              e.target.value = "";
+            }}
+          />
+        </div>
+      </div>
 
       <div className="rounded-2xl border border-slate-200 bg-white p-4">
         <h2 className="mb-3 text-sm font-semibold text-slate-600">カテゴリを追加</h2>
