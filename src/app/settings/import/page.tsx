@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import AccountManager from "./AccountManager";
 import ImportWizard from "./ImportWizard";
-import RestoreFromExport from "./RestoreFromExport";
 import { listAccounts } from "@/lib/repo";
 import { Account } from "@/lib/types";
 
@@ -18,10 +17,9 @@ export default function ImportSettingsPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <h1 className="text-xl font-bold">データインポート</h1>
+      <h1 className="text-xl font-bold">明細取り込み</h1>
       <AccountManager accounts={accounts} onChange={load} />
       <ImportWizard accounts={accounts} />
-      <RestoreFromExport onDone={load} />
     </div>
   );
 }

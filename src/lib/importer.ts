@@ -307,7 +307,7 @@ const TX_TYPE_JA: Record<string, TxType> = {
 
 /**
  * Restore transactions from a CSV produced by this app's own "データエクスポート"
- * (設定 → データインポート → Nolioのエクスポートデータ). Accounts and categories
+ * (設定 → データエクスポート・インポート → データインポート). Accounts and categories
  * are matched by name (their ids are per-browser and not portable), and created
  * automatically when missing — this is how data moves between browsers/devices.
  */

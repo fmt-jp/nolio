@@ -30,11 +30,9 @@ export default function RestoreFromExport({ onDone }: { onDone: () => void }) {
 
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-4">
-      <h2 className="mb-1 text-sm font-semibold text-slate-600">
-        Nolioのエクスポートデータを取り込む
-      </h2>
+      <h2 className="mb-1 text-sm font-semibold text-slate-600">データインポート</h2>
       <p className="mb-3 text-xs text-slate-400">
-        「設定 → データエクスポート」でダウンロードしたCSVを取り込みます。別のブラウザ・端末で使っていたデータを移行するときに使用してください。列の対応付けは不要で、口座・カテゴリは名称で自動的に一致（なければ新規作成）します。
+        「設定 → データエクスポート・インポート」の上の「データエクスポート」でダウンロードしたCSVを取り込みます。別のブラウザ・端末で使っていたデータを移行するときに使用してください。列の対応付けは不要で、口座・カテゴリは名称で自動的に一致（なければ新規作成）します。
       </p>
       <div className="flex flex-wrap items-center gap-2">
         <input

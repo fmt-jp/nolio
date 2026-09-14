@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { getDb } from "@/lib/idbClient";
+import RestoreFromExport from "../import/RestoreFromExport";
 
 function csvEscape(v: unknown): string {
   const s = v == null ? "" : String(v);
@@ -80,9 +81,10 @@ export default function ExportSettingsPage() {
   }
 
   return (
-    <div className="flex flex-col gap-4">
-      <h1 className="text-xl font-bold">データエクスポート</h1>
+    <div className="flex flex-col gap-6">
+      <h1 className="text-xl font-bold">データエクスポート・インポート</h1>
       <div className="rounded-2xl border border-slate-200 bg-white p-4">
+        <h2 className="mb-1 text-sm font-semibold text-slate-600">データエクスポート</h2>
         <p className="mb-4 text-sm text-slate-500">
           取り込んだすべての明細（元明細・集計名称・カテゴリ・取引種別・金額を含む）をCSVファイルとしてダウンロードできます。データはこの端末のブラウザ内にのみ保存されています。
         </p>
@@ -94,6 +96,7 @@ export default function ExportSettingsPage() {
           {downloading ? "準備中..." : "CSVをダウンロード"}
         </button>
       </div>
+      <RestoreFromExport onDone={() => {}} />
     </div>
   );
 }

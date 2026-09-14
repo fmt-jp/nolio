@@ -2,16 +2,16 @@ import Link from "next/link";
 
 const ITEMS = [
   {
-    href: "/settings/import",
-    title: "データインポート",
-    desc: "口座の管理と、銀行・クレジットカード明細のCSV取り込み",
-    icon: "📥",
+    href: "/settings/export",
+    title: "データエクスポート・インポート",
+    desc: "Nolioに取り込んだ明細データのエクスポートとインポート",
+    icon: "🔄",
   },
   {
-    href: "/settings/categories",
-    title: "カテゴリ",
-    desc: "収入・支出・資金移動のカテゴリを管理",
-    icon: "🏷️",
+    href: "/settings/import",
+    title: "明細取り込み",
+    desc: "口座の管理と、銀行・クレジットカード明細のCSV取り込み",
+    icon: "📥",
   },
   {
     href: "/settings/rules",
@@ -20,10 +20,10 @@ const ITEMS = [
     icon: "🧩",
   },
   {
-    href: "/settings/export",
-    title: "データエクスポート",
-    desc: "取り込んだ明細をCSVでエクスポート",
-    icon: "📤",
+    href: "/settings/categories",
+    title: "カテゴリ",
+    desc: "収入・支出・資金移動のカテゴリを管理",
+    icon: "🏷️",
   },
 ];
 
