@@ -54,7 +54,12 @@ export async function createAccount(input: {
 
 export async function updateAccount(
   id: string,
-  input: Partial<{ name: string; paymentKeyword: string | null; importConfig: ImportMapping }>
+  input: Partial<{
+    name: string;
+    type: AccountType;
+    paymentKeyword: string | null;
+    importConfig: ImportMapping;
+  }>
 ): Promise<Account | undefined> {
   const db = await getDb();
   const current = await db.get("accounts", id);
@@ -62,6 +67,7 @@ export async function updateAccount(
   const updated: Account = {
     ...current,
     name: input.name ?? current.name,
+    type: input.type ?? current.type,
     payment_keyword:
       input.paymentKeyword !== undefined ? input.paymentKeyword : current.payment_keyword,
     import_config: input.importConfig
