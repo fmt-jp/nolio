@@ -5,6 +5,7 @@ import TransactionEditModal from "@/components/TransactionEditModal";
 import BulkCategorizePanel from "@/components/BulkCategorizePanel";
 import { formatDateLabel, formatYen, typeLabel } from "@/lib/format";
 import {
+  deleteAllTransactions,
   deleteTransactions,
   getMeta,
   listTransactions,
@@ -33,6 +34,7 @@ export default function TransactionsPage() {
   const [editing, setEditing] = useState<TransactionWithJoins | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState(false);
+  const [deletingAll, setDeletingAll] = useState(false);
 
   useEffect(() => {
     getMeta().then((data) => {
@@ -129,9 +131,30 @@ export default function TransactionsPage() {
     setDeleting(false);
   }
 
+  async function handleDeleteAll() {
+    if (!confirm("すべての明細を削除しますか？この操作は取り消せません。")) return;
+    if (!confirm("本当に削除してよろしいですか？すべての明細が完全に削除されます。")) return;
+    setDeletingAll(true);
+    await deleteAllTransactions();
+    setSelectedIds(new Set());
+    setPage(1);
+    setItems([]);
+    setTotal(0);
+    setDeletingAll(false);
+  }
+
   return (
     <div className="flex flex-col gap-4">
-      <h1 className="text-xl font-bold">明細</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-xl font-bold">明細</h1>
+        <button
+          onClick={handleDeleteAll}
+          disabled={deletingAll}
+          className="text-xs font-medium text-slate-400 hover:text-red-600 disabled:opacity-50"
+        >
+          {deletingAll ? "削除中..." : "全削除"}
+        </button>
+      </div>
 
       <BulkCategorizePanel categories={categories} onApplied={refreshList} />
 

@@ -502,6 +502,11 @@ export async function deleteTransactions(ids: string[]): Promise<void> {
   await Promise.all([...ids.map((id) => tx.store.delete(id)), tx.done]);
 }
 
+export async function deleteAllTransactions(): Promise<void> {
+  const db = await getDb();
+  await db.clear("transactions");
+}
+
 export async function getDistinctMonths(): Promise<string[]> {
   const db = await getDb();
   const all = await db.getAll("transactions");
