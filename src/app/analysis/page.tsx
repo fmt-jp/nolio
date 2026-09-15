@@ -24,6 +24,7 @@ type Unit = "month" | "year";
 export default function AnalysisPage() {
   const [unit, setUnit] = useState<Unit>("month");
   const [yearMonth, setYearMonth] = useState(currentYearMonth());
+  const [trendAnchorMonth, setTrendAnchorMonth] = useState(currentYearMonth());
   const [year, setYear] = useState(String(new Date().getFullYear()));
   const [breakdownType, setBreakdownType] = useState<"EXPENSE" | "INCOME">("EXPENSE");
   const [accountId, setAccountId] = useState("");
@@ -47,7 +48,7 @@ export default function AnalysisPage() {
       const summaryPromise = getPeriodSummary(unit, period, filterAccountId);
       const trendPromise =
         unit === "month"
-          ? getMonthlyTrend(lastNMonths(12, yearMonth), filterAccountId)
+          ? getMonthlyTrend(lastNMonths(12, trendAnchorMonth), filterAccountId)
           : (async () => {
               const currentYear = String(new Date().getFullYear());
               const allYears = await getDistinctYears();
@@ -66,7 +67,7 @@ export default function AnalysisPage() {
     return () => {
       cancelled = true;
     };
-  }, [unit, yearMonth, year, accountId]);
+  }, [unit, yearMonth, trendAnchorMonth, year, accountId]);
 
   return (
     <div className="flex flex-col gap-6">
@@ -106,7 +107,13 @@ export default function AnalysisPage() {
             </button>
           </div>
           {unit === "month" ? (
-            <MonthSwitcher yearMonth={yearMonth} onChange={setYearMonth} />
+            <MonthSwitcher
+              yearMonth={yearMonth}
+              onChange={(ym) => {
+                setYearMonth(ym);
+                setTrendAnchorMonth(ym);
+              }}
+            />
           ) : (
             <div className="flex items-center gap-3">
               <button
