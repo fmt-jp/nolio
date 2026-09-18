@@ -1,5 +1,5 @@
 import { getDb } from "./idbClient";
-import { Category, Transaction } from "./types";
+import { Category, Transaction, TxType } from "./types";
 
 export interface CategoryBreakdownItem {
   categoryId: string | null;
@@ -169,6 +169,31 @@ export async function getYearlyTrend(
     const s = summarizeTransactions(transactions, categories, y, accountId);
     return { label: y, income: s.income, expense: s.expense, balance: s.balance };
   });
+}
+
+/**
+ * Merchant ranking scoped to a single category within the カテゴリ別内訳's
+ * clicked period — used to drill from a category into "which payees make up
+ * this amount". `categoryId: null` means the breakdown's collapsed "その他"
+ * bucket, so it aggregates every category NOT in `headCategoryIds` (the
+ * categories already shown individually in that breakdown).
+ */
+export async function getCategoryMerchants(
+  datePrefix: string,
+  type: TxType,
+  categoryId: string | null,
+  headCategoryIds: string[],
+  accountId?: string
+): Promise<MerchantBreakdownItem[]> {
+  const { transactions } = await loadContext();
+  const filtered = transactions.filter((t) => {
+    if (!t.date.startsWith(datePrefix)) return false;
+    if (t.type !== type) return false;
+    if (accountId && t.account_id !== accountId) return false;
+    if (categoryId !== null) return t.category_id === categoryId;
+    return !headCategoryIds.includes(t.category_id ?? "");
+  });
+  return merchantBreakdown(filtered);
 }
 
 export function lastNMonths(n: number, endYearMonth?: string): string[] {

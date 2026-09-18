@@ -9,10 +9,13 @@ import CategoryAmountTable from "@/components/CategoryAmountTable";
 import MerchantRankingList from "@/components/MerchantRankingList";
 import { currentYearMonth, formatSignedYen, formatYen } from "@/lib/format";
 import {
+  CategoryBreakdownItem,
+  getCategoryMerchants,
   getMonthlyTrend,
   getPeriodSummary,
   getYearlyTrend,
   lastNMonths,
+  MerchantBreakdownItem,
   PeriodSummary,
   TrendPoint,
 } from "@/lib/summary";
@@ -34,9 +37,18 @@ export default function AnalysisPage() {
   const [trend, setTrend] = useState<TrendPoint[]>([]);
   const [loading, setLoading] = useState(true);
 
+  const [selectedCategory, setSelectedCategory] = useState<CategoryBreakdownItem | null>(null);
+  const [categoryMerchants, setCategoryMerchants] = useState<MerchantBreakdownItem[]>([]);
+  const [categoryMerchantsLoading, setCategoryMerchantsLoading] = useState(false);
+
   useEffect(() => {
     listAccounts().then(setAccounts);
   }, []);
+
+  useEffect(() => {
+    setSelectedCategory(null);
+    setCategoryMerchants([]);
+  }, [unit, yearMonth, year, breakdownType, accountId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -68,6 +80,37 @@ export default function AnalysisPage() {
       cancelled = true;
     };
   }, [unit, yearMonth, trendAnchorMonth, year, accountId]);
+
+  const period = unit === "month" ? yearMonth : year;
+  const filterAccountId = accountId || undefined;
+  const currentBreakdown =
+    (breakdownType === "EXPENSE" ? summary?.expenseBreakdown : summary?.incomeBreakdown) ?? [];
+
+  async function handleSelectCategory(item: CategoryBreakdownItem) {
+    const key = item.categoryId ?? item.categoryName;
+    const selectedKey = selectedCategory
+      ? selectedCategory.categoryId ?? selectedCategory.categoryName
+      : null;
+    if (key === selectedKey) {
+      setSelectedCategory(null);
+      setCategoryMerchants([]);
+      return;
+    }
+    setSelectedCategory(item);
+    setCategoryMerchantsLoading(true);
+    const headCategoryIds = currentBreakdown
+      .filter((i) => i.categoryId !== null)
+      .map((i) => i.categoryId as string);
+    const merchants = await getCategoryMerchants(
+      period,
+      breakdownType,
+      item.categoryId,
+      headCategoryIds,
+      filterAccountId
+    );
+    setCategoryMerchants(merchants);
+    setCategoryMerchantsLoading(false);
+  }
 
   return (
     <div className="flex flex-col gap-6">
@@ -185,35 +228,60 @@ export default function AnalysisPage() {
         {loading ? (
           <ChartSkeleton />
         ) : (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <CategoryPieChart
-              data={
-                breakdownType === "EXPENSE"
-                  ? summary?.expenseBreakdown ?? []
-                  : summary?.incomeBreakdown ?? []
-              }
-            />
-            <CategoryAmountTable
-              items={
-                breakdownType === "EXPENSE"
-                  ? summary?.expenseBreakdown ?? []
-                  : summary?.incomeBreakdown ?? []
-              }
-            />
-          </div>
+          <>
+            <p className="mb-2 text-xs text-slate-400">
+              （カテゴリをクリックすると、そのカテゴリの摘要・支払先・利用先を下に表示）
+            </p>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <CategoryPieChart
+                data={currentBreakdown}
+                selectedKey={
+                  selectedCategory
+                    ? selectedCategory.categoryId ?? selectedCategory.categoryName
+                    : null
+                }
+                onSelect={handleSelectCategory}
+              />
+              <CategoryAmountTable
+                items={currentBreakdown}
+                selectedKey={
+                  selectedCategory
+                    ? selectedCategory.categoryId ?? selectedCategory.categoryName
+                    : null
+                }
+                onSelect={handleSelectCategory}
+              />
+            </div>
+          </>
         )}
       </div>
 
       <div className="rounded-2xl border border-slate-200 bg-white p-4">
-        <h2 className="mb-3 text-sm font-semibold text-slate-600">
-          摘要・支払先・利用先別ランキング（{breakdownType === "EXPENSE" ? "支出" : "収入"}）
-        </h2>
-        {loading ? (
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold text-slate-600">
+            摘要・支払先・利用先別ランキング（{breakdownType === "EXPENSE" ? "支出" : "収入"}
+            {selectedCategory ? ` - ${selectedCategory.categoryName}` : ""}）
+          </h2>
+          {selectedCategory && (
+            <button
+              onClick={() => {
+                setSelectedCategory(null);
+                setCategoryMerchants([]);
+              }}
+              className="text-xs font-medium text-slate-400 hover:text-slate-600"
+            >
+              すべてのカテゴリを表示
+            </button>
+          )}
+        </div>
+        {loading || (selectedCategory && categoryMerchantsLoading) ? (
           <ChartSkeleton />
         ) : (
           <MerchantRankingList
             items={
-              breakdownType === "EXPENSE"
+              selectedCategory
+                ? categoryMerchants
+                : breakdownType === "EXPENSE"
                 ? summary?.expenseMerchants ?? []
                 : summary?.incomeMerchants ?? []
             }

@@ -3,7 +3,15 @@
 import { formatYen } from "@/lib/format";
 import { CategoryBreakdownItem } from "@/lib/summary";
 
-export default function CategoryAmountTable({ items }: { items: CategoryBreakdownItem[] }) {
+export default function CategoryAmountTable({
+  items,
+  selectedKey,
+  onSelect,
+}: {
+  items: CategoryBreakdownItem[];
+  selectedKey?: string | null;
+  onSelect?: (item: CategoryBreakdownItem) => void;
+}) {
   if (items.length === 0) {
     return (
       <div className="flex h-24 items-center justify-center text-sm text-slate-400">
@@ -25,26 +33,37 @@ export default function CategoryAmountTable({ items }: { items: CategoryBreakdow
           </tr>
         </thead>
         <tbody>
-          {items.map((item) => (
-            <tr
-              key={item.categoryId ?? item.categoryName}
-              className="border-b border-slate-50 last:border-0"
-            >
-              <td className="py-2">
-                <span
-                  className="mr-2 inline-block h-2 w-2 rounded-full align-middle"
-                  style={{ backgroundColor: item.color ?? "#94a3b8" }}
-                />
-                <span className="align-middle text-slate-700">{item.categoryName}</span>
-              </td>
-              <td className="py-2 text-right font-medium text-slate-800">
-                {formatYen(item.amount)}
-              </td>
-              <td className="py-2 text-right text-slate-400">
-                {(item.ratio * 100).toFixed(1)}%
-              </td>
-            </tr>
-          ))}
+          {items.map((item) => {
+            const key = item.categoryId ?? item.categoryName;
+            const selected = selectedKey != null && key === selectedKey;
+            return (
+              <tr
+                key={key}
+                onClick={onSelect ? () => onSelect(item) : undefined}
+                className={`border-b border-slate-50 last:border-0 ${
+                  onSelect ? "cursor-pointer hover:bg-slate-50" : ""
+                } ${selected ? "bg-slate-50" : ""}`}
+              >
+                <td className="py-2">
+                  <span
+                    className="mr-2 inline-block h-2 w-2 rounded-full align-middle"
+                    style={{ backgroundColor: item.color ?? "#94a3b8" }}
+                  />
+                  <span
+                    className={`align-middle text-slate-700 ${selected ? "font-semibold" : ""}`}
+                  >
+                    {item.categoryName}
+                  </span>
+                </td>
+                <td className="py-2 text-right font-medium text-slate-800">
+                  {formatYen(item.amount)}
+                </td>
+                <td className="py-2 text-right text-slate-400">
+                  {(item.ratio * 100).toFixed(1)}%
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
         <tfoot>
           <tr className="border-t border-slate-200 text-sm font-semibold">

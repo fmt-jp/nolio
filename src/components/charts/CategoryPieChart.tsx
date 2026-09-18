@@ -17,8 +17,12 @@ const FALLBACK_COLORS = [
 
 export default function CategoryPieChart({
   data,
+  selectedKey,
+  onSelect,
 }: {
   data: CategoryBreakdownItem[];
+  selectedKey?: string | null;
+  onSelect?: (item: CategoryBreakdownItem) => void;
 }) {
   if (data.length === 0) {
     return (
@@ -40,12 +44,19 @@ export default function CategoryPieChart({
             outerRadius={85}
             paddingAngle={2}
           >
-            {data.map((entry, i) => (
-              <Cell
-                key={entry.categoryId ?? `none-${i}`}
-                fill={entry.color || FALLBACK_COLORS[i % FALLBACK_COLORS.length]}
-              />
-            ))}
+            {data.map((entry, i) => {
+              const key = entry.categoryId ?? entry.categoryName;
+              const dimmed = selectedKey != null && key !== selectedKey;
+              return (
+                <Cell
+                  key={entry.categoryId ?? `none-${i}`}
+                  fill={entry.color || FALLBACK_COLORS[i % FALLBACK_COLORS.length]}
+                  fillOpacity={dimmed ? 0.35 : 1}
+                  cursor={onSelect ? "pointer" : undefined}
+                  onClick={onSelect ? () => onSelect(entry) : undefined}
+                />
+              );
+            })}
           </Pie>
           <Tooltip
             formatter={(value, name) => [formatYen(Number(value)), String(name)]}
