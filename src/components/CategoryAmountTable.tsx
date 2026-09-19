@@ -24,7 +24,10 @@ export default function CategoryAmountTable({
 
   return (
     <div className="overflow-x-auto">
-      <table className="w-full text-sm">
+      {/* WebKit "font boosting" can still resize text inside <table> cells based on
+          content length even with -webkit-text-size-adjust:100% set globally on html,
+          so it's reinforced here directly on the table itself. */}
+      <table className="w-full text-sm" style={{ WebkitTextSizeAdjust: "100%" }}>
         <thead>
           <tr className="border-b border-slate-100 text-left text-xs text-slate-400">
             <th className="pb-2 font-normal">カテゴリ</th>
@@ -55,10 +58,10 @@ export default function CategoryAmountTable({
                     {item.categoryName}
                   </span>
                 </td>
-                <td className="py-2 text-right font-medium text-slate-800">
+                <td className="py-2 text-right font-medium tabular-nums text-slate-800">
                   {formatYen(item.amount)}
                 </td>
-                <td className="py-2 text-right text-slate-400">
+                <td className="py-2 text-right tabular-nums text-slate-400">
                   {(item.ratio * 100).toFixed(1)}%
                 </td>
               </tr>
@@ -68,8 +71,8 @@ export default function CategoryAmountTable({
         <tfoot>
           <tr className="border-t border-slate-200 text-sm font-semibold">
             <td className="pt-2 text-slate-600">合計</td>
-            <td className="pt-2 text-right text-slate-800">{formatYen(total)}</td>
-            <td className="pt-2 text-right text-slate-400">100.0%</td>
+            <td className="pt-2 text-right tabular-nums text-slate-800">{formatYen(total)}</td>
+            <td className="pt-2 text-right tabular-nums text-slate-400">100.0%</td>
           </tr>
         </tfoot>
       </table>
