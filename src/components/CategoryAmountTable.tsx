@@ -1,16 +1,23 @@
 "use client";
 
-import { formatYen } from "@/lib/format";
+import ComparisonChip from "./ComparisonChip";
+import { computeDelta, formatYen } from "@/lib/format";
 import { CategoryBreakdownItem } from "@/lib/summary";
 
 export default function CategoryAmountTable({
   items,
   selectedKey,
   onSelect,
+  comparison,
 }: {
   items: CategoryBreakdownItem[];
   selectedKey?: string | null;
   onSelect?: (item: CategoryBreakdownItem) => void;
+  comparison?: {
+    goodDirection: "up" | "down";
+    previousLabel: string;
+    averageLabel: string;
+  };
 }) {
   if (items.length === 0) {
     return (
@@ -21,6 +28,8 @@ export default function CategoryAmountTable({
   }
 
   const total = items.reduce((s, i) => s + i.amount, 0);
+  const totalPrevious = items.reduce((s, i) => s + i.previousAmount, 0);
+  const totalAverage = items.reduce((s, i) => s + i.averageAmount, 0);
 
   return (
     <div className="overflow-x-auto">
@@ -33,6 +42,12 @@ export default function CategoryAmountTable({
             <th className="pb-2 font-normal">カテゴリ</th>
             <th className="pb-2 text-right font-normal">金額</th>
             <th className="pb-2 text-right font-normal">割合</th>
+            {comparison && (
+              <>
+                <th className="pb-2 pl-3 text-right font-normal">{comparison.previousLabel}</th>
+                <th className="pb-2 pl-3 text-right font-normal">{comparison.averageLabel}</th>
+              </>
+            )}
           </tr>
         </thead>
         <tbody>
@@ -64,6 +79,22 @@ export default function CategoryAmountTable({
                 <td className="py-2 text-right tabular-nums text-slate-400">
                   {(item.ratio * 100).toFixed(1)}%
                 </td>
+                {comparison && (
+                  <>
+                    <td className="py-2 pl-3 text-right">
+                      <ComparisonChip
+                        delta={computeDelta(item.amount, item.previousAmount)}
+                        goodDirection={comparison.goodDirection}
+                      />
+                    </td>
+                    <td className="py-2 pl-3 text-right">
+                      <ComparisonChip
+                        delta={computeDelta(item.amount, item.averageAmount)}
+                        goodDirection={comparison.goodDirection}
+                      />
+                    </td>
+                  </>
+                )}
               </tr>
             );
           })}
@@ -73,6 +104,22 @@ export default function CategoryAmountTable({
             <td className="pt-2 text-slate-600">合計</td>
             <td className="pt-2 text-right tabular-nums text-slate-800">{formatYen(total)}</td>
             <td className="pt-2 text-right tabular-nums text-slate-400">100.0%</td>
+            {comparison && (
+              <>
+                <td className="pt-2 pl-3 text-right">
+                  <ComparisonChip
+                    delta={computeDelta(total, totalPrevious)}
+                    goodDirection={comparison.goodDirection}
+                  />
+                </td>
+                <td className="pt-2 pl-3 text-right">
+                  <ComparisonChip
+                    delta={computeDelta(total, totalAverage)}
+                    goodDirection={comparison.goodDirection}
+                  />
+                </td>
+              </>
+            )}
           </tr>
         </tfoot>
       </table>

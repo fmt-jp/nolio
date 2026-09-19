@@ -8,6 +8,10 @@ export interface CategoryBreakdownItem {
   color: string | null;
   amount: number;
   ratio: number;
+  /** Same category's amount in the previous period (previous month/year). */
+  previousAmount: number;
+  /** Same category's average amount over the trend chart's window (12 months / 5 years). */
+  averageAmount: number;
 }
 
 export interface MerchantBreakdownItem {
@@ -65,10 +69,61 @@ function breakdown(
     ];
   }
 
+  // previousAmount/averageAmount are filled in afterward by withCategoryComparisons;
+  // this function doesn't have the other periods' data to compute them itself.
   return items.map((i) => ({
     ...i,
     ratio: total > 0 ? i.amount / total : 0,
+    previousAmount: 0,
+    averageAmount: 0,
   }));
+}
+
+function categoryTotalsByType(
+  transactions: Transaction[],
+  datePrefix: string,
+  type: TxType,
+  accountId?: string
+): Map<string, number> {
+  const map = new Map<string, number>();
+  for (const t of transactions) {
+    if (t.type !== type) continue;
+    if (!t.date.startsWith(datePrefix)) continue;
+    if (accountId && t.account_id !== accountId) continue;
+    const key = t.category_id ?? "";
+    map.set(key, (map.get(key) ?? 0) + Math.abs(t.amount));
+  }
+  return map;
+}
+
+/**
+ * Fills in each breakdown item's previousAmount/averageAmount by category id.
+ * The collapsed "その他のカテゴリ" row (categoryId: null) sums every category
+ * NOT individually shown in `items`, so it stays an apples-to-apples "everything
+ * else" comparison across periods even though which categories get collapsed
+ * can differ period to period.
+ */
+function withCategoryComparisons(
+  items: CategoryBreakdownItem[],
+  previousTotals: Map<string, number>,
+  windowTotalsList: Map<string, number>[]
+): CategoryBreakdownItem[] {
+  const headIds = items.filter((i) => i.categoryId !== null).map((i) => i.categoryId as string);
+  const n = windowTotalsList.length || 1;
+  const sumExcludingHead = (m: Map<string, number>) =>
+    [...m.entries()].reduce((s, [k, v]) => (headIds.includes(k) ? s : s + v), 0);
+
+  return items.map((item) => {
+    if (item.categoryId !== null) {
+      const previousAmount = previousTotals.get(item.categoryId) ?? 0;
+      const averageAmount =
+        windowTotalsList.reduce((s, m) => s + (m.get(item.categoryId as string) ?? 0), 0) / n;
+      return { ...item, previousAmount, averageAmount };
+    }
+    const previousAmount = sumExcludingHead(previousTotals);
+    const averageAmount = windowTotalsList.reduce((s, m) => s + sumExcludingHead(m), 0) / n;
+    return { ...item, previousAmount, averageAmount };
+  });
 }
 
 function groupByCategory(
@@ -190,7 +245,18 @@ export async function getPeriodSummary(
     window.map((v) => summarizeTotals(transactions, v, accountId))
   );
 
-  return { ...current, previousPeriod, periodAverage };
+  const incomeBreakdown = withCategoryComparisons(
+    current.incomeBreakdown,
+    categoryTotalsByType(transactions, previousValue, "INCOME", accountId),
+    window.map((v) => categoryTotalsByType(transactions, v, "INCOME", accountId))
+  );
+  const expenseBreakdown = withCategoryComparisons(
+    current.expenseBreakdown,
+    categoryTotalsByType(transactions, previousValue, "EXPENSE", accountId),
+    window.map((v) => categoryTotalsByType(transactions, v, "EXPENSE", accountId))
+  );
+
+  return { ...current, incomeBreakdown, expenseBreakdown, previousPeriod, periodAverage };
 }
 
 export interface TrendPoint {

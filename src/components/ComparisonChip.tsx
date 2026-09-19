@@ -5,14 +5,16 @@ export default function ComparisonChip({
   delta,
   goodDirection,
 }: {
-  label: string;
+  label?: string;
   delta: Delta;
   goodDirection: "up" | "down";
 }) {
+  const prefix = label ? `${label} ` : "";
+
   if (delta.direction === "flat") {
     return (
       <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500">
-        {label} 変化なし
+        {prefix}変化なし
       </span>
     );
   }
@@ -42,7 +44,7 @@ export default function ComparisonChip({
           strokeLinejoin="round"
         />
       </svg>
-      {label} {valueText}
+      {prefix}{valueText}
     </span>
   );
 }

@@ -279,6 +279,11 @@ export default function AnalysisPage() {
                     : null
                 }
                 onSelect={handleSelectCategory}
+                comparison={{
+                  goodDirection: breakdownType === "EXPENSE" ? "down" : "up",
+                  previousLabel: unit === "month" ? "前月比" : "前年比",
+                  averageLabel: unit === "month" ? "年平均比" : "5年平均比",
+                }}
               />
             </div>
           </>
