@@ -1,4 +1,5 @@
 import { getDb } from "./idbClient";
+import { shiftYearMonth } from "./format";
 import { Category, Transaction, TxType } from "./types";
 
 export interface CategoryBreakdownItem {
@@ -16,6 +17,12 @@ export interface MerchantBreakdownItem {
   ratio: number;
 }
 
+export interface PeriodComparisonValues {
+  income: number;
+  expense: number;
+  balance: number;
+}
+
 export interface PeriodSummary {
   income: number;
   expense: number;
@@ -24,6 +31,10 @@ export interface PeriodSummary {
   expenseBreakdown: CategoryBreakdownItem[];
   incomeMerchants: MerchantBreakdownItem[];
   expenseMerchants: MerchantBreakdownItem[];
+  /** Same period one unit back (previous month, or previous year). */
+  previousPeriod: PeriodComparisonValues;
+  /** Average over the same trailing window shown in the trend chart (12 months, or 5 years), current period included. */
+  periodAverage: PeriodComparisonValues;
 }
 
 const MAX_BREAKDOWN_ITEMS = 6;
@@ -96,12 +107,43 @@ function merchantBreakdown(txs: Transaction[]): MerchantBreakdownItem[] {
   return items.map((i) => ({ ...i, ratio: total > 0 ? i.amount / total : 0 }));
 }
 
+/** Just the totals — used for comparison periods, where breakdowns/merchant rankings aren't needed. */
+function summarizeTotals(
+  transactions: Transaction[],
+  datePrefix: string,
+  accountId?: string
+): PeriodComparisonValues {
+  const filtered = transactions.filter(
+    (t) => t.date.startsWith(datePrefix) && (!accountId || t.account_id === accountId)
+  );
+  const incomeTotal = filtered
+    .filter((t) => t.type === "INCOME")
+    .reduce((s, t) => s + t.amount, 0);
+  const expenseTotal = filtered
+    .filter((t) => t.type === "EXPENSE")
+    .reduce((s, t) => s + t.amount, 0);
+  return {
+    income: incomeTotal,
+    expense: Math.abs(expenseTotal),
+    balance: incomeTotal + expenseTotal,
+  };
+}
+
+function averageComparisonValues(values: PeriodComparisonValues[]): PeriodComparisonValues {
+  const n = values.length || 1;
+  return {
+    income: values.reduce((s, v) => s + v.income, 0) / n,
+    expense: values.reduce((s, v) => s + v.expense, 0) / n,
+    balance: values.reduce((s, v) => s + v.balance, 0) / n,
+  };
+}
+
 function summarizeTransactions(
   transactions: Transaction[],
   categories: Category[],
   datePrefix: string,
   accountId?: string
-): PeriodSummary {
+): Omit<PeriodSummary, "previousPeriod" | "periodAverage"> {
   const categoryMap = new Map(categories.map((c) => [c.id, c]));
   const filtered = transactions.filter(
     (t) => t.date.startsWith(datePrefix) && (!accountId || t.account_id === accountId)
@@ -137,9 +179,18 @@ export async function getPeriodSummary(
   value: string,
   accountId?: string
 ): Promise<PeriodSummary> {
-  void kind;
   const { transactions, categories } = await loadContext();
-  return summarizeTransactions(transactions, categories, value, accountId);
+  const current = summarizeTransactions(transactions, categories, value, accountId);
+
+  const previousValue = kind === "month" ? shiftYearMonth(value, -1) : String(Number(value) - 1);
+  const previousPeriod = summarizeTotals(transactions, previousValue, accountId);
+
+  const window = kind === "month" ? lastNMonths(12, value) : lastNYears(5, value);
+  const periodAverage = averageComparisonValues(
+    window.map((v) => summarizeTotals(transactions, v, accountId))
+  );
+
+  return { ...current, previousPeriod, periodAverage };
 }
 
 export interface TrendPoint {
@@ -205,6 +256,15 @@ export function lastNMonths(n: number, endYearMonth?: string): string[] {
     const d = new Date(end.getFullYear(), end.getMonth() - i, 1);
     const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
     result.push(ym);
+  }
+  return result;
+}
+
+export function lastNYears(n: number, endYear?: string): string[] {
+  const end = endYear ? Number(endYear) : new Date().getFullYear();
+  const result: string[] = [];
+  for (let i = n - 1; i >= 0; i--) {
+    result.push(String(end - i));
   }
   return result;
 }

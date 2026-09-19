@@ -32,3 +32,15 @@ export function shiftYearMonth(yearMonth: string, delta: number): string {
   const d = new Date(y, m - 1 + delta, 1);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
+
+export interface Delta {
+  /** Percent change vs. base; null when base is 0 and current isn't (change is undefined, not "0%"). */
+  pct: number | null;
+  direction: "up" | "down" | "flat";
+}
+
+export function computeDelta(current: number, base: number): Delta {
+  if (current === base) return { pct: 0, direction: "flat" };
+  if (base === 0) return { pct: null, direction: current > base ? "up" : "down" };
+  return { pct: ((current - base) / Math.abs(base)) * 100, direction: current > base ? "up" : "down" };
+}

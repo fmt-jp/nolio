@@ -7,7 +7,8 @@ import TrendBarChart from "@/components/charts/TrendBarChart";
 import CategoryPieChart from "@/components/charts/CategoryPieChart";
 import CategoryAmountTable from "@/components/CategoryAmountTable";
 import MerchantRankingList from "@/components/MerchantRankingList";
-import { currentYearMonth, formatSignedYen, formatYen } from "@/lib/format";
+import ComparisonChip from "@/components/ComparisonChip";
+import { computeDelta, currentYearMonth, formatSignedYen, formatYen } from "@/lib/format";
 import {
   CategoryBreakdownItem,
   getCategoryMerchants,
@@ -178,9 +179,37 @@ export default function AnalysisPage() {
       </div>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <SummaryCard label="収入" value={summary?.income ?? 0} tone="income" />
-        <SummaryCard label="支出" value={summary?.expense ?? 0} tone="expense" />
-        <SummaryCard label="収支" value={summary?.balance ?? 0} tone="balance" signed />
+        <SummaryCard
+          label="収入"
+          value={summary?.income ?? 0}
+          tone="income"
+          goodDirection="up"
+          previousValue={summary?.previousPeriod.income}
+          averageValue={summary?.periodAverage.income}
+          previousLabel={unit === "month" ? "前月比" : "前年比"}
+          averageLabel={unit === "month" ? "年平均比" : "5年平均比"}
+        />
+        <SummaryCard
+          label="支出"
+          value={summary?.expense ?? 0}
+          tone="expense"
+          goodDirection="down"
+          previousValue={summary?.previousPeriod.expense}
+          averageValue={summary?.periodAverage.expense}
+          previousLabel={unit === "month" ? "前月比" : "前年比"}
+          averageLabel={unit === "month" ? "年平均比" : "5年平均比"}
+        />
+        <SummaryCard
+          label="収支"
+          value={summary?.balance ?? 0}
+          tone="balance"
+          signed
+          goodDirection="up"
+          previousValue={summary?.previousPeriod.balance}
+          averageValue={summary?.periodAverage.balance}
+          previousLabel={unit === "month" ? "前月比" : "前年比"}
+          averageLabel={unit === "month" ? "年平均比" : "5年平均比"}
+        />
       </div>
 
       <div className="rounded-2xl border border-slate-200 bg-white p-4">
@@ -297,11 +326,21 @@ function SummaryCard({
   value,
   tone,
   signed,
+  goodDirection,
+  previousValue,
+  averageValue,
+  previousLabel,
+  averageLabel,
 }: {
   label: string;
   value: number;
   tone: "income" | "expense" | "balance";
   signed?: boolean;
+  goodDirection: "up" | "down";
+  previousValue?: number;
+  averageValue?: number;
+  previousLabel: string;
+  averageLabel: string;
 }) {
   const toneClass =
     tone === "income"
@@ -318,6 +357,20 @@ function SummaryCard({
       <div className={`mt-1 text-2xl font-bold ${toneClass}`}>
         {signed ? formatSignedYen(value) : formatYen(value)}
       </div>
+      {previousValue !== undefined && averageValue !== undefined && (
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          <ComparisonChip
+            label={previousLabel}
+            delta={computeDelta(value, previousValue)}
+            goodDirection={goodDirection}
+          />
+          <ComparisonChip
+            label={averageLabel}
+            delta={computeDelta(value, averageValue)}
+            goodDirection={goodDirection}
+          />
+        </div>
+      )}
     </div>
   );
 }
