@@ -50,7 +50,7 @@ function breakdown(
       .reduce((s, r) => s + r.amount, 0);
     items = [
       ...head,
-      { categoryId: null, categoryName: "その他", color: "#9ca3af", amount: restAmount },
+      { categoryId: null, categoryName: "その他のカテゴリ", color: "#9ca3af", amount: restAmount },
     ];
   }
 
@@ -174,9 +174,11 @@ export async function getYearlyTrend(
 /**
  * Merchant ranking scoped to a single category within the カテゴリ別内訳's
  * clicked period — used to drill from a category into "which payees make up
- * this amount". `categoryId: null` means the breakdown's collapsed "その他"
- * bucket, so it aggregates every category NOT in `headCategoryIds` (the
- * categories already shown individually in that breakdown).
+ * this amount". `categoryId: null` means the breakdown's collapsed "その他の
+ * カテゴリ" bucket (deliberately distinct from an actual category the user
+ * may have named "その他"), so it aggregates every category NOT in
+ * `headCategoryIds` (the categories already shown individually in that
+ * breakdown).
  */
 export async function getCategoryMerchants(
   datePrefix: string,
