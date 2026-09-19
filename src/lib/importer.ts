@@ -206,7 +206,7 @@ export async function applyAutoOtherForSmallOneOffs(): Promise<{ updated: number
     if (!category?.is_system) continue; // only still-未分類 transactions
     if (t.type !== "INCOME" && t.type !== "EXPENSE") continue;
 
-    const key = `${t.normalized_name}${t.type}`;
+    const key = `${t.normalized_name}::${t.type}`;
     const arr = groups.get(key);
     if (arr) arr.push(t);
     else groups.set(key, [t]);
@@ -305,20 +305,62 @@ const TX_TYPE_JA: Record<string, TxType> = {
   資金移動: "TRANSFER",
 };
 
+export interface MissingCategoryInfo {
+  key: string;
+  name: string;
+  type: TxType;
+  count: number;
+}
+
+/**
+ * Scans a Nolio-export CSV for categories that don't exist yet in this browser,
+ * so the caller can ask the user, per missing category, whether to create it or
+ * map it onto an existing category — before committing anything.
+ */
+export async function previewNolioExportCategories(
+  csvText: string
+): Promise<MissingCategoryInfo[]> {
+  const { rows } = parseCsvText(csvText, ",");
+  const dataRows = rows.slice(1);
+  const categories = await listCategories();
+  const existingKeys = new Set(categories.map((c) => `${c.name}::${c.type}`));
+
+  const missing = new Map<string, MissingCategoryInfo>();
+  for (const row of dataRows) {
+    const [, , , , , categoryName, txTypeJa] = row;
+    const txType = TX_TYPE_JA[txTypeJa];
+    if (!categoryName || !txType) continue;
+    const key = `${categoryName}::${txType}`;
+    if (existingKeys.has(key)) continue;
+    const cur = missing.get(key) ?? { key, name: categoryName, type: txType, count: 0 };
+    cur.count += 1;
+    missing.set(key, cur);
+  }
+  return [...missing.values()].sort((a, b) => b.count - a.count);
+}
+
+export type CategoryImportDecision =
+  | { action: "create" }
+  | { action: "map"; targetCategoryId: string };
+
 /**
  * Restore transactions from a CSV produced by this app's own "データエクスポート"
  * (設定 → データエクスポート・インポート → データインポート). Accounts and categories
  * are matched by name (their ids are per-browser and not portable), and created
  * automatically when missing — this is how data moves between browsers/devices.
  */
-export async function restoreFromNolioExport(csvText: string): Promise<RestoreResult> {
+export async function restoreFromNolioExport(
+  csvText: string,
+  categoryDecisions?: Map<string, CategoryImportDecision>
+): Promise<RestoreResult> {
   const { rows } = parseCsvText(csvText, ",");
   const dataRows = rows.slice(1); // fixed header row from our own export
   if (dataRows.length === 0) throw new Error("CSVを解析できませんでした");
 
   const [accounts, categories] = await Promise.all([listAccounts(), listCategories()]);
-  const accountByKey = new Map(accounts.map((a) => [`${a.name}${a.type}`, a]));
-  const categoryByKey = new Map(categories.map((c) => [`${c.name}${c.type}`, c]));
+  const accountByKey = new Map(accounts.map((a) => [`${a.name}::${a.type}`, a]));
+  const categoryByKey = new Map(categories.map((c) => [`${c.name}::${c.type}`, c]));
+  const categoryById = new Map(categories.map((c) => [c.id, c]));
 
   const db = await getDb();
   const existingHashCache = new Map<string, Set<string>>();
@@ -351,7 +393,7 @@ export async function restoreFromNolioExport(csvText: string): Promise<RestoreRe
       continue;
     }
 
-    const accountKey = `${accountName}${accountType}`;
+    const accountKey = `${accountName}::${accountType}`;
     let account = accountByKey.get(accountKey);
     if (!account) {
       account = await createAccount({ name: accountName, type: accountType });
@@ -359,12 +401,18 @@ export async function restoreFromNolioExport(csvText: string): Promise<RestoreRe
       accountsCreated++;
     }
 
-    const categoryKey = `${categoryName}${txType}`;
+    const categoryKey = `${categoryName}::${txType}`;
     let category = categoryName ? categoryByKey.get(categoryKey) : undefined;
     if (!category && categoryName) {
-      category = await createCategory({ name: categoryName, type: txType });
+      const decision = categoryDecisions?.get(categoryKey);
+      if (decision?.action === "map") {
+        category = categoryById.get(decision.targetCategoryId);
+      }
+      if (!category) {
+        category = await createCategory({ name: categoryName, type: txType });
+        categoriesCreated++;
+      }
       categoryByKey.set(categoryKey, category);
-      categoriesCreated++;
     }
     const categoryId = category
       ? category.id
@@ -429,7 +477,7 @@ export async function getUncategorizedGroups(): Promise<UncategorizedGroup[]> {
     if (!category?.is_system) continue; // only 未分類(収入)/未分類(支出)
     if (t.type !== "INCOME" && t.type !== "EXPENSE") continue;
 
-    const key = `${t.normalized_name}${t.type}`;
+    const key = `${t.normalized_name}::${t.type}`;
     let g = groups.get(key);
     if (!g) {
       g = {
