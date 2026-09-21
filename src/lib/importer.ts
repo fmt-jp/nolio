@@ -16,7 +16,7 @@ import {
   listNormalizationRules,
   updateAccount,
 } from "./repo";
-import { AccountType, ImportMapping, Transaction, TxType } from "./types";
+import { Account, AccountType, Category, ImportMapping, Transaction, TxType } from "./types";
 
 export interface CommitResult {
   batchId: string;
@@ -32,6 +32,45 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
+/** Resolves the transfer category used for card-payment transfer detection,
+ * matching how 資金移動の候補 → 資金移動として登録 already resolves it. */
+function resolveCardPaymentCategoryId(categories: Category[]): string | null {
+  const transferCategories = categories.filter((c) => c.type === "TRANSFER");
+  return (
+    transferCategories.find((c) => c.name === "口座振替・カード引落")?.id ??
+    transferCategories[0]?.id ??
+    null
+  );
+}
+
+/**
+ * For a BANK account transaction, checks whether its description matches any
+ * registered credit card's "銀行明細での引落表記"(payment_keyword) — if so it's
+ * almost certainly that card's bill being paid, not a real expense, so it gets
+ * auto-classified as a resource transfer right away instead of waiting for the
+ * user to find it later via 資金移動の候補. Only payment_keyword is used here
+ * (an explicit hint the user typed for exactly this purpose); a card's plain
+ * name alone stays in the 資金移動の候補 suggestion flow, where a false match is
+ * just an ignorable suggestion rather than a silent miscategorization.
+ */
+function applyCardPaymentTransfer(
+  normalizedName: string,
+  rawDescription: string,
+  accountType: AccountType,
+  cardAccounts: Account[],
+  categories: Category[]
+): string | null {
+  if (accountType !== "BANK") return null;
+  const matched = cardAccounts.some(
+    (card) =>
+      card.payment_keyword &&
+      (normalizedName.includes(card.payment_keyword) ||
+        rawDescription.includes(card.payment_keyword))
+  );
+  if (!matched) return null;
+  return resolveCardPaymentCategoryId(categories);
+}
+
 export async function commitImport(
   accountId: string,
   rows: string[][],
@@ -42,12 +81,14 @@ export async function commitImport(
   if (!account) throw new Error("口座が見つかりません");
 
   const { parsed, errors } = buildRows(rows, mapping);
-  const [normRules, catRules, categories] = await Promise.all([
+  const [normRules, catRules, categories, accounts] = await Promise.all([
     listNormalizationRules(),
     listCategoryRules(),
     listCategories(),
+    listAccounts(),
   ]);
   const categoryMap = new Map(categories.map((c) => [c.id, c]));
+  const cardAccounts = accounts.filter((a) => a.type === "CREDIT_CARD");
 
   const db = await getDb();
   const existingForAccount = await db.getAllFromIndex(
@@ -73,11 +114,18 @@ export async function commitImport(
 
     const { name: normalizedName } = applyNormalization(row.rawDescription, normRules);
     const ruleCategoryId = applyCategoryRules(normalizedName, row.rawDescription, catRules);
+    const transferCategoryId = applyCardPaymentTransfer(
+      normalizedName,
+      row.rawDescription,
+      account.type,
+      cardAccounts,
+      categories
+    );
     const builtinCategoryId = applyBuiltinCategory(normalizedName, row.rawDescription, categories);
     const defaultCategoryId = await getUncategorizedCategoryId(
       row.amount >= 0 ? "INCOME" : "EXPENSE"
     );
-    const categoryId = ruleCategoryId ?? builtinCategoryId ?? defaultCategoryId;
+    const categoryId = ruleCategoryId ?? transferCategoryId ?? builtinCategoryId ?? defaultCategoryId;
     const categoryType = categoryMap.get(categoryId)?.type ?? "EXPENSE";
 
     newTransactions.push({
@@ -134,13 +182,16 @@ export async function commitImport(
 /** Re-apply current normalization/category rules to existing transactions that were not manually edited. */
 export async function reapplyRules(): Promise<{ updated: number; autoOther: number }> {
   const db = await getDb();
-  const [normRules, catRules, categories, allTx] = await Promise.all([
+  const [normRules, catRules, categories, allTx, accounts] = await Promise.all([
     listNormalizationRules(),
     listCategoryRules(),
     listCategories(),
     db.getAll("transactions"),
+    listAccounts(),
   ]);
   const categoryMap = new Map(categories.map((c) => [c.id, c]));
+  const accountMap = new Map(accounts.map((a) => [a.id, a]));
+  const cardAccounts = accounts.filter((a) => a.type === "CREDIT_CARD");
 
   const toUpdate: Transaction[] = [];
   for (const t of allTx) {
@@ -157,11 +208,18 @@ export async function reapplyRules(): Promise<{ updated: number; autoOther: numb
     }
 
     const ruleCategoryId = applyCategoryRules(normalizedName, t.raw_description, catRules);
+    const transferCategoryId = applyCardPaymentTransfer(
+      normalizedName,
+      t.raw_description,
+      accountMap.get(t.account_id)?.type ?? "BANK",
+      cardAccounts,
+      categories
+    );
     const builtinCategoryId = applyBuiltinCategory(normalizedName, t.raw_description, categories);
     const defaultCategoryId = await getUncategorizedCategoryId(
       t.amount >= 0 ? "INCOME" : "EXPENSE"
     );
-    const categoryId = ruleCategoryId ?? builtinCategoryId ?? defaultCategoryId;
+    const categoryId = ruleCategoryId ?? transferCategoryId ?? builtinCategoryId ?? defaultCategoryId;
     const categoryType = categoryMap.get(categoryId)?.type ?? "EXPENSE";
 
     toUpdate.push({
