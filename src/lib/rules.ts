@@ -44,7 +44,12 @@ export function applyNormalization(
  * transactions get categorized out of the box without the user having to define
  * any rules. User-defined category rules always take priority over this list.
  */
-export const BUILTIN_CATEGORY_KEYWORDS: { pattern: string; categoryName: string }[] = [
+export const BUILTIN_CATEGORY_KEYWORDS: {
+  pattern: string;
+  categoryName: string;
+  /** Skip this entry if any of these substrings is also present (avoids false positives on unrelated products sharing the same brand name). */
+  exclude?: string[];
+}[] = [
   // 食費・日用品
   { pattern: "セブンイレブン", categoryName: "食費・日用品" },
   { pattern: "セブン-イレブン", categoryName: "食費・日用品" },
@@ -105,7 +110,7 @@ export const BUILTIN_CATEGORY_KEYWORDS: { pattern: string; categoryName: string 
   { pattern: "日本交通", categoryName: "車・交通" },
   { pattern: "GO タクシー", categoryName: "車・交通" },
   // 通信・サブスク
-  { pattern: "NTTドコモ", categoryName: "通信・サブスク" },
+  { pattern: "NTTドコモ", categoryName: "通信・サブスク", exclude: ["ビジネス"] },
   { pattern: "au PAY", categoryName: "通信・サブスク" },
   { pattern: "auでんき", categoryName: "通信・サブスク" },
   { pattern: "ソフトバンク", categoryName: "通信・サブスク" },
@@ -164,10 +169,11 @@ export function applyBuiltinCategory(
   const targets = [toComparableText(normalizedName), toComparableText(rawDescription)];
   for (const entry of BUILTIN_CATEGORY_KEYWORDS) {
     const pattern = toComparableText(entry.pattern);
-    if (targets.some((t) => t.includes(pattern))) {
-      const category = categories.find((c) => c.name === entry.categoryName);
-      if (category) return category.id;
-    }
+    if (!targets.some((t) => t.includes(pattern))) continue;
+    const excludePatterns = entry.exclude?.map(toComparableText) ?? [];
+    if (excludePatterns.some((ex) => targets.some((t) => t.includes(ex)))) continue;
+    const category = categories.find((c) => c.name === entry.categoryName);
+    if (category) return category.id;
   }
   return null;
 }
