@@ -1,10 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { decodeBuffer, guessMapping, parseCsvText, RowError } from "@/lib/csv";
+import { decodeBuffer, guessMapping, hashFileContent, parseCsvText, RowError } from "@/lib/csv";
 import { CommitResult, commitImport } from "@/lib/importer";
-import { getAccount } from "@/lib/repo";
-import { Account, AmountMode, ImportMapping } from "@/lib/types";
+import { getAccount, listImportBatches } from "@/lib/repo";
+import { Account, AmountMode, ImportBatch, ImportMapping } from "@/lib/types";
 
 interface PreviewData {
   rows: string[][];
@@ -40,6 +40,8 @@ export default function ImportWizard({ accounts }: { accounts: Account[] }) {
 
   const [preview, setPreview] = useState<PreviewData | null>(null);
   const [mapping, setMapping] = useState<ImportMapping | null>(null);
+  const [fileHash, setFileHash] = useState<string | null>(null);
+  const [duplicateBatch, setDuplicateBatch] = useState<ImportBatch | null>(null);
 
   const [committing, setCommitting] = useState(false);
   const [result, setResult] = useState<CommitResult | null>(null);
@@ -47,12 +49,17 @@ export default function ImportWizard({ accounts }: { accounts: Account[] }) {
 
   const MAX_SIZE = 8 * 1024 * 1024; // 8MB
 
-  async function buildPreviewData(): Promise<{ data: PreviewData; mapping: ImportMapping }> {
+  async function buildPreviewData(): Promise<{
+    data: PreviewData;
+    mapping: ImportMapping;
+    fileHash: string;
+  }> {
     if (!file || !accountId) throw new Error("口座とファイルを選択してください");
     if (file.size > MAX_SIZE) {
       throw new Error("ファイルサイズが大きすぎます (8MB以下)");
     }
     const buf = await file.arrayBuffer();
+    const fileHash = await hashFileContent(buf);
     const text = decodeBuffer(buf, encoding);
     const { rows, rowCount } = parseCsvText(text, delimiter);
     if (rowCount === 0) throw new Error("CSVを解析できませんでした");
@@ -90,7 +97,7 @@ export default function ImportWizard({ accounts }: { accounts: Account[] }) {
       expenseColumnIndex: sm.expenseColumnIndex ?? null,
       memoColumnIndex: sm.memoColumnIndex ?? null,
     };
-    return { data, mapping: newMapping };
+    return { data, mapping: newMapping, fileHash };
   }
 
   async function handlePreview() {
@@ -98,9 +105,11 @@ export default function ImportWizard({ accounts }: { accounts: Account[] }) {
     setPreviewError(null);
     setResult(null);
     try {
-      const { data, mapping: newMapping } = await buildPreviewData();
+      const { data, mapping: newMapping, fileHash: hash } = await buildPreviewData();
       setPreview(data);
       setMapping(newMapping);
+      setFileHash(hash);
+      setDuplicateBatch(await findDuplicateBatch(accountId, hash));
     } catch (e) {
       setPreviewError(e instanceof Error ? e.message : "プレビューに失敗しました");
       setPreview(null);
@@ -109,13 +118,39 @@ export default function ImportWizard({ accounts }: { accounts: Account[] }) {
     }
   }
 
+  async function findDuplicateBatch(
+    forAccountId: string,
+    hash: string
+  ): Promise<ImportBatch | null> {
+    const batches = await listImportBatches(forAccountId);
+    return batches.find((b) => b.file_hash === hash) ?? null;
+  }
+
+  function duplicateWarningMessage(batch: ImportBatch): string {
+    const when = new Date(batch.imported_at).toLocaleString("ja-JP", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    return `このファイルと同じ内容のファイルが ${when} に取り込み済みです（新規 ${batch.new_count}件）。それでも取り込みますか？（同じ明細行は自動的に重複スキップされます）`;
+  }
+
   async function handleCommit() {
     if (!preview || !mapping || !accountId) return;
     setCommitting(true);
     setCommitError(null);
     try {
-      const data = await commitImport(accountId, preview.rows, mapping, file?.name ?? null);
+      const data = await commitImport(
+        accountId,
+        preview.rows,
+        mapping,
+        file?.name ?? null,
+        fileHash
+      );
       setResult(data);
+      setDuplicateBatch(null);
     } catch (e) {
       setCommitError(e instanceof Error ? e.message : "取り込みに失敗しました");
     } finally {
@@ -129,13 +164,29 @@ export default function ImportWizard({ accounts }: { accounts: Account[] }) {
     setResult(null);
     setCommitError(null);
     try {
-      const { data, mapping: newMapping } = await buildPreviewData();
+      const { data, mapping: newMapping, fileHash: hash } = await buildPreviewData();
+      const duplicate = await findDuplicateBatch(accountId, hash);
+      if (duplicate && !window.confirm(duplicateWarningMessage(duplicate))) {
+        setPreview(data);
+        setMapping(newMapping);
+        setFileHash(hash);
+        setDuplicateBatch(duplicate);
+        return;
+      }
       setPreview(data);
       setMapping(newMapping);
+      setFileHash(hash);
       setLoadingPreview(false);
       setCommitting(true);
-      const commitResult = await commitImport(accountId, data.rows, newMapping, file?.name ?? null);
+      const commitResult = await commitImport(
+        accountId,
+        data.rows,
+        newMapping,
+        file?.name ?? null,
+        hash
+      );
       setResult(commitResult);
+      setDuplicateBatch(null);
     } catch (e) {
       setPreviewError(e instanceof Error ? e.message : "取り込みに失敗しました");
     } finally {
@@ -148,6 +199,8 @@ export default function ImportWizard({ accounts }: { accounts: Account[] }) {
     setFile(null);
     setPreview(null);
     setMapping(null);
+    setFileHash(null);
+    setDuplicateBatch(null);
     setResult(null);
     setPreviewError(null);
     setCommitError(null);
@@ -223,6 +276,8 @@ export default function ImportWizard({ accounts }: { accounts: Account[] }) {
                   setFile(e.target.files?.[0] ?? null);
                   setPreview(null);
                   setResult(null);
+                  setFileHash(null);
+                  setDuplicateBatch(null);
                 }}
                 className="block text-sm"
               />
@@ -455,6 +510,12 @@ export default function ImportWizard({ accounts }: { accounts: Account[] }) {
                   </select>
                 </label>
               </div>
+
+              {duplicateBatch && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-700">
+                  ⚠️ {duplicateWarningMessage(duplicateBatch)}
+                </div>
+              )}
 
               <div className="flex items-center gap-3">
                 <button

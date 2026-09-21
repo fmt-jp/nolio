@@ -75,7 +75,8 @@ export async function commitImport(
   accountId: string,
   rows: string[][],
   mapping: ImportMapping,
-  fileName: string | null
+  fileName: string | null,
+  fileHash: string | null = null
 ): Promise<CommitResult> {
   const account = await getAccount(accountId);
   if (!account) throw new Error("口座が見つかりません");
@@ -156,6 +157,7 @@ export async function commitImport(
       id: batchId,
       account_id: accountId,
       file_name: fileName,
+      file_hash: fileHash,
       imported_at: now,
       row_count: parsed.length,
       new_count: newCount,

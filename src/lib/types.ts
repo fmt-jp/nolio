@@ -87,6 +87,7 @@ export interface ImportBatch {
   id: string;
   account_id: string;
   file_name: string | null;
+  file_hash: string | null;
   imported_at: string;
   row_count: number;
   new_count: number;

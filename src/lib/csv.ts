@@ -26,6 +26,14 @@ export function decodeBuffer(
   return Encoding.codeToString(unicodeArray);
 }
 
+/** SHA-256 hash of the raw file bytes, used to detect re-uploading a file already imported. */
+export async function hashFileContent(buf: ArrayBuffer): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", buf);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
 export interface ParsedCsv {
   rows: string[][];
   rowCount: number;

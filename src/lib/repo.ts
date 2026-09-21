@@ -6,6 +6,7 @@ import {
   AccountType,
   Category,
   CategoryRule,
+  ImportBatch,
   ImportMapping,
   MatchType,
   NormalizationRule,
@@ -519,6 +520,15 @@ export async function getDistinctYears(): Promise<string[]> {
   const all = await db.getAll("transactions");
   const set = new Set(all.map((t) => t.date.slice(0, 4)));
   return [...set].sort((a, b) => b.localeCompare(a));
+}
+
+// ---------- Import batches ----------
+export async function listImportBatches(accountId: string): Promise<ImportBatch[]> {
+  const db = await getDb();
+  const all = await db.getAll("importBatches");
+  return all
+    .filter((b) => b.account_id === accountId)
+    .sort((a, b) => b.imported_at.localeCompare(a.imported_at));
 }
 
 export async function getMeta(): Promise<{
