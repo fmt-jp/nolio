@@ -8,6 +8,14 @@ import CategoryPieChart from "@/components/charts/CategoryPieChart";
 import CategoryAmountTable from "@/components/CategoryAmountTable";
 import MerchantRankingList from "@/components/MerchantRankingList";
 import ComparisonChip from "@/components/ComparisonChip";
+import RecurringExpenseList from "@/components/RecurringExpenseList";
+import SpendingRhythm from "@/components/SpendingRhythm";
+import {
+  getRecurringExpenses,
+  getSpendingRhythm,
+  RecurringExpense,
+  SpendingRhythm as Rhythm,
+} from "@/lib/insights";
 import { computeDelta, currentYearMonth, formatSignedYen, formatYen } from "@/lib/format";
 import {
   CategoryBreakdownItem,
@@ -37,6 +45,8 @@ export default function AnalysisPage() {
   const [summary, setSummary] = useState<PeriodSummary | null>(null);
   const [trend, setTrend] = useState<TrendPoint[]>([]);
   const [loading, setLoading] = useState(true);
+  const [recurring, setRecurring] = useState<RecurringExpense[]>([]);
+  const [rhythm, setRhythm] = useState<Rhythm | null>(null);
 
   const [selectedCategory, setSelectedCategory] = useState<CategoryBreakdownItem | null>(null);
   const [categoryMerchants, setCategoryMerchants] = useState<MerchantBreakdownItem[]>([]);
@@ -69,10 +79,17 @@ export default function AnalysisPage() {
               return getYearlyTrend(years.slice(-5), filterAccountId);
             })();
 
-      const [summaryRes, trendPoints] = await Promise.all([summaryPromise, trendPromise]);
+      const [summaryRes, trendPoints, recurringRes, rhythmRes] = await Promise.all([
+        summaryPromise,
+        trendPromise,
+        getRecurringExpenses(filterAccountId),
+        getSpendingRhythm(unit, period, filterAccountId),
+      ]);
       if (cancelled) return;
       setSummary(summaryRes);
       setTrend(trendPoints);
+      setRecurring(recurringRes);
+      setRhythm(rhythmRes);
       setLoading(false);
     }
 
@@ -321,6 +338,25 @@ export default function AnalysisPage() {
             }
           />
         )}
+      </div>
+
+      <div className="rounded-2xl border border-slate-200 bg-white p-4">
+        <h2 className="mb-3 text-sm font-semibold text-slate-600">
+          支出のリズム（{unit === "month" ? "曜日・日別" : "曜日・月内タイミング別"}）
+        </h2>
+        {loading || !rhythm ? (
+          <ChartSkeleton />
+        ) : (
+          <SpendingRhythm rhythm={rhythm} unit={unit} period={period} />
+        )}
+      </div>
+
+      <div className="rounded-2xl border border-slate-200 bg-white p-4">
+        <h2 className="mb-3 text-sm font-semibold text-slate-600">
+          サブスク・定期支出
+          <span className="ml-2 font-normal text-slate-400">（全期間のデータから自動検出）</span>
+        </h2>
+        {loading ? <ChartSkeleton /> : <RecurringExpenseList items={recurring} />}
       </div>
     </div>
   );
