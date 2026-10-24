@@ -52,7 +52,7 @@ export default function SpendingRhythm({
       </p>
 
       {unit === "month" && (
-        <div>
+        <div className="mx-auto w-full max-w-md">
           <div className="mb-1 grid grid-cols-7 gap-1 text-center text-xs text-slate-400">
             {WEEKDAY_LABELS.map((w) => (
               <div key={w}>{w}</div>
